@@ -1,69 +1,31 @@
 from langchain_core.tools import tool, InjectedToolCallId
 from AI_State.state import Todo
 from langgraph.types import Command
-from langchain_core.messages import ToolMessage
-from typing_extensions import Annotated
+from langchain_core.messages import ToolMessage, HumanMessage
+from typing_extensions import Annotated, Literal
 from AI_State.state import State
 from langgraph.prebuilt import InjectedState
+from AI_Sys_Prompt.system_prompt_agent import (
+    WRITE_TODOS_DESCRIPTION,
+    LS_DESCRIPTION,
+    READ_FILE_DESCRIPTION,
+    WRITE_FILE_DESCRIPTION,
+    INTERNET_SEARCH_DESCRIPTION,
+    SUMMARIZE_WEB_SEARCH
+)
+from tavily import TavilyClient
+import uuid, base64
+import os
+from dotenv import load_dotenv
+from datetime import datetime
+from AI_STRUCT_OUT.summary import Summary
+from AI_LLM.agent_llm import MyLLM
+import traceback
 
-WRITE_TODOS_DESCRIPTION =""" Create and manage structured task lists for tracking progress through complex workflows.                       
-                                                                                                               
- ## When to Use                                                                                                
- - Multi-step or non-trivial tasks requiring coordination                                                      
- - When user provides multiple tasks or explicitly requests todo list                                          
- - Avoid for single, trivial actions                                                                           
-                                                                                                               
- ## Structure                                                                                                  
- - Maintain one list containing multiple todo objects (content, status, id)                                    
- - Use clear, actionable content descriptions                                                                  
- - Status must be: pending, in_progress, or completed                                                          
-                                                                                                               
- ## Best Practices                                                                                             
- - Only one in_progress task at a time                                                                         
- - Mark completed immediately when task is fully done                                                          
- - Always send the full updated list when making changes                                                       
- - Prune irrelevant items to keep list focused                                                                 
-                                                                                                               
- ## Progress Updates                                                                                           
- - Call TodoWrite again to change task status or edit content                                                  
- - Reflect real-time progress; don't batch completions                                                         
- - If blocked, keep in_progress and add new task describing blocker                                            
-                                                                                                               
- ## Parameters                                                                                                 
- - todos: List of TODO items with content and status fields                                                    
-                                                                                                               
- ## Returns                                                                                                    
- Updates agent state with new todo list.  """
+# Load environment variables
+load_dotenv()
 
-LS_DESCRIPTION = """  List all files in the virtual filesystem stored in agent state.                             
-                                                                                                                
- Shows what files currently exist in agent memory. Use this to orient yourself before other file operations     
- and maintain awareness of your file organization.                                                              
-                                                                                                                
- No parameters required - simply call ls() to see all available files.  """
- 
-READ_FILE_DESCRIPTION = """ Read content from a file in the virtual filesystem with optional pagination.         
-                                                                                                                 
- This tool returns file content with line numbers (like `cat -n`) and supports reading large files in chunks    
- to avoid context overflow.                                                                                     
-                                                                                                                 
- Parameters:                                                                                                    
-  - file_path (required): Path to the file you want to read                                                      
-  - offset (optional, default=0): Line number to start reading from                                              
-  - limit (optional, default=2000): Maximum number of lines to read                                              
-                                                                                                                 
- Essential before making any edits to understand existing content. Always read a file before editing it."""
- 
-WRITE_FILE_DESCRIPTION = """  Create a new file or completely overwrite an existing file in the virtual filesystem.                          
-                                                                                                                 
-  This tool creates new files or replaces entire file contents. Use for initial file creation or complete        
-  rewrites. Files are stored persistently in agent state.                                                        
-                                                                                                                 
-  Parameters:                                                                                                    
-  - file_path (required): Path where the file should be created/overwritten                                      
-  - content (required): The complete content to write to the file                                                
-                                                                                                                 
-  Important: This replaces the entire file content. Use edit_file for partial modifications.  """
+
 
 
 @tool(description=WRITE_TODOS_DESCRIPTION,parse_docstring=True)
@@ -116,38 +78,6 @@ def read_todos(
         result += f"{i}. {emoji} {todo['content']} ({todo['status']})\n"
 
     return result.strip()
-
-# Mock search result
-search_result = """The Model Context Protocol (MCP) is an open standard protocol developed 
-by Anthropic to enable seamless integration between AI models and external systems like 
-tools, databases, and other services. It acts as a standardized communication layer, 
-allowing AI models to access and utilize data from various sources in a consistent and 
-efficient manner. Essentially, MCP simplifies the process of connecting AI assistants 
-to external services by providing a unified language for data exchange. """
-
-
-# Mock search tool
-@tool(parse_docstring=True)
-def web_search(
-    query: str,
-):
-    """Search the web for information on a specific topic.
-
-    This tool performs web searches and returns relevant results
-    for the given query. Use this when you need to gather information from
-    the internet about any topic.
-
-    Args:
-        query: The search query string. Be specific and clear about what
-               information you're looking for.
-
-    Returns:
-        Search results from search engine.
-
-    Example:
-        web_search("machine learning applications in healthcare")
-    """
-    return search_result
 
 @tool(description=LS_DESCRIPTION)
 def ls(state: Annotated[State, InjectedState]) -> list[str]:
@@ -222,8 +152,161 @@ def write_file(
             ],
         }
     )
+    
+@tool(description="Get current date")
+def get_current_date() -> str:
+    """Get current date"""
+    return datetime.now().strftime("%a %b %d, %Y")
+
+def get_today_str() -> str:
+    """Get current date"""
+    return datetime.now().strftime("%a %b %d, %Y")
+    
+@tool(description=INTERNET_SEARCH_DESCRIPTION)
+def internet_search(
+    query: str,
+    state: Annotated[State, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    max_results: int = 5,
+    topic: Literal["general", "news", "finance"] = "general",
+):
+    try:
+        tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+        
+        search_results = tavily_client.search(
+            query,
+            max_results=max_results,
+            include_raw_content=True,
+            topic=topic,
+        )
+        files = state.get("files", {})
+        saved_files = []
+        summaries = []
+        
+        for result in search_results.get('results', []):
+            try:
+                # Process and summarize results
+                content = result['raw_content']
+                if not content:
+                    continue
+                processed_results = summarize_webpage_content(content)
+                # uniquify file names
+                uid = base64.urlsafe_b64encode(uuid.uuid4().bytes).rstrip(b"=").decode("ascii")[:8]
+                name, ext = os.path.splitext(processed_results.filename)
+                processed_results.filename = f"{name}_{uid}{ext}"
+                file_content = f"""# Search Result: {result['title']}
+
+**URL:** {result['url']}
+**Query:** {query}
+
+## Summary
+{processed_results.summary}
+
+## Raw Content
+{result['raw_content'] if result['raw_content'] else 'No raw content available'}
+"""
+
+                files[processed_results.filename] = file_content
+                saved_files.append(processed_results.filename)
+                summaries.append(f"- {processed_results.filename}: {processed_results.summary}...")
+                
+            except Exception as e:
+                print(f"Error processing search result: {e}")
+                print("Full stacktrace:")
+                traceback.print_exc()
+                continue
+
+        # Create minimal summary for tool message - focus on what was collected
+        summary_text = f"""🔍 Found {len(saved_files)} result(s) for '{query}':
+        
+{chr(10).join(summaries)}
+
+Files: {', '.join(saved_files)}
+💡 Use read_file() to access full details when needed."""
+        
+        return Command(
+            update={
+                "files": files,
+                "messages": [
+                    ToolMessage(summary_text, tool_call_id=tool_call_id)
+                ],
+            }
+        )
+        
+    except Exception as e:
+        print(f"Error in internet_search: {e}")
+        error_message = f"❌ Failed to search for '{query}': {str(e)}"
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(error_message, tool_call_id=tool_call_id)
+                ],
+            }
+        )
+
+
+def summarize_webpage_content(webpage_content: str) -> Summary:
+    """Summarize webpage content using the configured summarization model.
+
+    Args:
+        webpage_content: Raw webpage content to summarize
+
+    Returns:
+        Summary object with filename and summary
+    """
+    try:
+        llm_factory = MyLLM(temperature=0.7,tools=MyTools().getAllTools(),model="gpt-oss:120b-cloud")
+        llm_web_search = llm_factory.llm_without_tools()
+        llm_for_web_search = llm_web_search.with_structured_output(Summary)
+        # Generate summary
+        content=SUMMARIZE_WEB_SEARCH.format(
+                webpage_content=webpage_content, 
+                date=get_today_str()
+        )
+        summary_and_filename = llm_for_web_search.invoke([
+            HumanMessage(content)
+        ])
+        return summary_and_filename
+
+    except Exception as e:
+        print(f"Error in summarize_webpage_content: {e}")
+        print("Full stacktrace:")
+        traceback.print_exc()
+        # Return a basic summary object on failure
+        return Summary(
+            filename="search_result.md",
+            summary=str(e)
+        )
+
+@tool(parse_docstring=True)
+def think_tool(reflection: str) -> str:
+    """Tool for strategic reflection on research progress and decision-making.
+
+    Use this tool after each search to analyze results and plan next steps systematically.
+    This creates a deliberate pause in the research workflow for quality decision-making.
+
+    When to use:
+    - After receiving search results: What key information did I find?
+    - Before deciding next steps: Do I have enough to answer comprehensively?
+    - When assessing research gaps: What specific information am I still missing?
+    - Before concluding research: Can I provide a complete answer now?
+    - How complex is the question: Have I reached the number of search limits?
+
+    Reflection should address:
+    1. Analysis of current findings - What concrete information have I gathered?
+    2. Gap assessment - What crucial information is still missing?
+    3. Quality evaluation - Do I have sufficient evidence/examples for a good answer?
+    4. Strategic decision - Should I continue searching or provide my answer?
+
+    Args:
+        reflection: Your detailed reflection on research progress, findings, gaps, and next steps
+
+    Returns:
+        Confirmation that reflection was recorded for decision-making
+    """
+    return f"Reflection recorded: {reflection}"
 
 class MyTools:
     def getAllTools(self):
-        return [write_todos, read_todos, web_search, ls, read_file]    
+        return [write_todos, read_todos, ls, read_file, internet_search,think_tool,get_current_date]    
     

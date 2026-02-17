@@ -1,0 +1,3 @@
+"""
+all structured output formats.
+"""

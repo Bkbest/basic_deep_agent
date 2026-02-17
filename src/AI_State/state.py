@@ -9,7 +9,7 @@ are handled through the appropriate reducer functions.
 
 from typing_extensions import Annotated
 from AI_Reducers.reducers import file_reducer
-from langgraph.prebuilt.chat_agent_executor import AgentState
+from langchain.agents import AgentState
 from typing import TypedDict, Literal
 
 

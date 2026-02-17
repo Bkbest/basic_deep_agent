@@ -1,9 +1,10 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from AI_State.state import State
 from AI_Tools.tools import MyTools
-from AI_Sys_Prompt.system_prompt_agent import system_prompt_todo_req
+from AI_Sys_Prompt.system_prompt_agent import AGENT_DESCRIPTION
 from AI_LLM.agent_llm import MyLLM
 from langgraph.graph import END
+
 
 llm_factory = MyLLM(temperature=0.7,tools=MyTools().getAllTools())
 llm = llm_factory.llm_without_tools()
@@ -33,7 +34,7 @@ def llm_with_tools(state: State):
     print(state["messages"])
     # Create the prompt template with system prompt and messages
     prompt_template = ChatPromptTemplate.from_messages  ([
-            ("system", system_prompt_todo_req),
+            ("system", AGENT_DESCRIPTION),
             MessagesPlaceholder(variable_name="messages")
         ])
     chain = prompt_template.invoke(state)
