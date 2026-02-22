@@ -31,7 +31,6 @@ def llm_with_tools(state: State):
     Returns:
         Dict containing updated messages
     """
-    print(state["messages"])
     # Create the prompt template with system prompt and messages
     prompt_template = ChatPromptTemplate.from_messages  ([
             ("system", AGENT_DESCRIPTION),
