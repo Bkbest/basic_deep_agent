@@ -6,7 +6,8 @@ from AI_LLM.agent_llm import MyLLM
 from langgraph.graph import END
 
 
-llm_factory = MyLLM(temperature=0.7,tools=MyTools().getAllTools())
+tools=MyTools().getToolsSync()
+llm_factory = MyLLM(temperature=0.7,tools=tools)
 llm = llm_factory.llm_without_tools()
 llm_tools = llm_factory.llm_with_tools()
 

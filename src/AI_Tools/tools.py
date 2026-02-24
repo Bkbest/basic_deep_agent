@@ -21,6 +21,8 @@ from datetime import datetime
 from AI_STRUCT_OUT.summary import Summary
 from AI_LLM.agent_llm import MyLLM
 import traceback
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
 
 # Load environment variables
 load_dotenv()
@@ -307,6 +309,20 @@ def think_tool(reflection: str) -> str:
     return f"Reflection recorded: {reflection}"
 
 class MyTools:
-    def getAllTools(self):
-        return [write_todos, read_todos, ls, read_file, internet_search,think_tool,get_current_date]    
+    async def getAllTools(self):
+        client = MultiServerMCPClient(
+            {
+                "pandora_sandbox": {
+                    "transport": "streamable_http",
+                    "url": "http://192.168.68.111:3000/mcp",
+                }
+            }
+        )
+        sandbox_tools = await client.get_tools()
+        return [write_todos, read_todos, ls, read_file, internet_search,think_tool,get_current_date] + sandbox_tools
+    
+    def getToolsSync(self):
+        """Synchronous wrapper for getAllTools"""
+        import asyncio
+        return asyncio.run(self.getAllTools())
     

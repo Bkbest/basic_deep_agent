@@ -127,6 +127,12 @@ When conducting web searches, additionally use the think_tool (reflection tool) 
 - Make strategic decisions about continuing searches vs. providing answers
 - Plan next steps methodically
 
+**Code Sandbox:**
+- You have access to a code execution sandbox for running code snippets
+- Use the execute_code tool when you need to test code, verify algorithms, or demonstrate programming concepts
+- Supported languages: Python
+- Use for: debugging, testing logic, validating solutions, code examples
+
 You have access to a virtual file system to help you retain and save context.      
 ## Workflow Process                                                                                            
 1. **Orient**: Use ls() to see existing files before starting work                                              

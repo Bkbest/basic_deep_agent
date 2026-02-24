@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 def create_research_brief_workflow():
     # Create the workflow graph
     workflow = StateGraph(state_schema=State)
-    all_tools = MyTools().getAllTools()
+    all_tools = MyTools().getToolsSync()
 
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools)
