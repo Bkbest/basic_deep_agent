@@ -314,7 +314,7 @@ class MyTools:
             {
                 "pandora_sandbox": {
                     "transport": "streamable_http",
-                    "url": "http://192.168.68.111:3000/mcp",
+                    "url": os.getenv("SANDBOX_URL"),
                 }
             }
         )
