@@ -8,3 +8,6 @@ langchain-ollama
 langgraph
 tavily-python
 langchain_mcp_adapters
+langmem
+langgraph-checkpoint-postgres
+
