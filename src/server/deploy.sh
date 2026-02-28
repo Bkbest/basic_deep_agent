@@ -16,6 +16,7 @@ fi
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip
 "$VENV_DIR/bin/pip" install -r "$APP_DIR/requirements.txt"
+"$VENV_DIR/bin/pip" install -e "$APP_DIR/../../"
 
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 

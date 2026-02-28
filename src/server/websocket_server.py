@@ -15,7 +15,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Add the src directory to the path so we can import our modules
-sys.path.append('.')
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Load environment variables
 load_dotenv()
