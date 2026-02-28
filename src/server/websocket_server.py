@@ -131,7 +131,7 @@ API_DOCUMENTATION = {
     "title": "AI Agent WebSocket Server API",
     "version": "1.0.0",
     "description": "RESTful API and WebSocket server for AI Agent with real-time communication capabilities",
-    "base_url": "http://localhost:8000",
+    "base_url": "http://localhost:8000",  # Update this to match your deployment
     "endpoints": {
         "GET /": {
             "description": "Serve the main HTML page with WebSocket client interface",
@@ -783,7 +783,11 @@ async def get_index():
 
                 // Create new connection for this thread
                 console.log(`Creating new connection for thread: ${threadId}`);
-                const ws = new WebSocket('ws://localhost:8000/ws');
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const host = window.location.hostname;
+                const port = window.location.port || '8000';
+                const wsUrl = `${protocol}//${host}:${port}/ws`;
+                const ws = new WebSocket(wsUrl);
                 
                 ws.onopen = function(event) {
                     console.log(`Connected to server for thread: ${threadId}`);
@@ -1165,6 +1169,10 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
 
 if __name__ == "__main__":
-    print("Starting WebSocket server on http://localhost:8000")
-    print("WebSocket endpoint: ws://localhost:8000/ws")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Get host and port from environment variables with defaults
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8001"))
+    
+    print(f"Starting WebSocket server on http://{host}:{port}")
+    print(f"WebSocket endpoint: ws://{host}:{port}/ws")
+    uvicorn.run(app, host=host, port=port)
