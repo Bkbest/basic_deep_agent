@@ -20,12 +20,23 @@ sys.path.append('.')
 # Load environment variables
 load_dotenv()
 
+
 from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 def extract_meaningful_content(chunk: dict) -> dict:
     """
-    Extract messages from workflow chunks and convert to clean JSON format
+    Extract messages from workflow chunks and convert to clean JSON format.
+    
+    This function processes workflow chunks from the AI agent and extracts
+    meaningful content (AI messages, human messages, and tool messages) while
+    filtering out empty content and organizing them into clean data structures.
+    
+    Args:
+        chunk: Dictionary containing workflow chunk data with node names as keys
+        
+    Returns:
+        dict: Cleaned dictionary with organized messages by type (ai_messages, human_messages, tool_messages)
     """
     result = {}
     
@@ -36,51 +47,365 @@ def extract_meaningful_content(chunk: dict) -> dict:
             
         node_result = {}
         
-        # Handle messages with separate keys for AI and Human
+        # Handle messages with separate keys for AI, Human, and Tool
         if 'messages' in node_data:
             ai_messages = []
             human_messages = []
+            tool_messages = []
             
             for msg in node_data['messages']:
-                if hasattr(msg, 'content'):
+                # Handle LangChain message objects (HumanMessage, AIMessage, ToolMessage)
+                msg_type = None
+                content = ''
+                msg_id = None
+                usage_metadata = None
+                tool_calls = []
+                
+                if hasattr(msg, 'type'):
+                    # LangChain message object
+                    msg_type = msg.type
+                    content = getattr(msg, 'content', '')
+                    msg_id = getattr(msg, 'id', None)
+                    if hasattr(msg, 'usage_metadata'):
+                        usage_metadata = msg.usage_metadata
+                    if hasattr(msg, 'tool_calls'):
+                        tool_calls = msg.tool_calls
+                elif isinstance(msg, dict):
+                    # Dictionary format (from sample JSON)
+                    msg_type = msg.get('type')
+                    content = msg.get('content', '')
+                    msg_id = msg.get('id', None)
+                    usage_metadata = msg.get('usage_metadata')
+                    tool_calls = msg.get('tool_calls', [])
+                
+                # Include human messages, AI messages with non-empty content, and tool messages with non-empty content (same logic as process_thread_result)
+                if msg_type == 'human':
                     message_content = {
-                        'content': getattr(msg, 'content', ''),
-                        'id': getattr(msg, 'id', None)
+                        'content': content,
+                        'type': msg_type,
+                        'id': msg_id
+                    }
+                    human_messages.append(message_content)
+                elif msg_type == 'ai' and content and content.strip():
+                    message_content = {
+                        'content': content,
+                        'type': msg_type,
+                        'id': msg_id
                     }
                     
-                    # Add usage metadata if present
-                    if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
-                        message_content['usage_metadata'] = msg.usage_metadata
+                    # Add usage metadata if present (for AI messages)
+                    if usage_metadata:
+                        message_content['usage_metadata'] = usage_metadata
                     
-                    # Separate by message type
-                    msg_type = getattr(msg, 'type', 'unknown')
-                    if msg_type == 'ai':
-                        ai_messages.append(message_content)
-                    elif msg_type == 'human':
-                        human_messages.append(message_content)
-                    else:
-                        # Default to AI for unknown types
-                        ai_messages.append(message_content)
+                    ai_messages.append(message_content)
+                elif msg_type == 'tool' and content and content.strip():
+                    # Check if this is a write_todos tool message
+                    tool_name = None
+                    if hasattr(msg, 'name'):
+                        tool_name = getattr(msg, 'name', None)
+                    elif isinstance(msg, dict):
+                        tool_name = msg.get('name')
+                    
+                    if tool_name == 'write_todos':
+                        message_content = {
+                            'content': content,
+                            'type': msg_type,
+                            'id': msg_id
+                        }
+                        tool_messages.append(message_content)
+                # Skip messages with empty content (same as process_thread_result)
             
             if ai_messages:
                 node_result['ai_messages'] = ai_messages
             if human_messages:
                 node_result['human_messages'] = human_messages
-        
-        # Add any other clean data
-        for key, value in node_data.items():
-            if key != 'messages':
-                if isinstance(value, (str, int, float, bool, list, dict)):
-                    node_result[key] = value
-                else:
-                    node_result[key] = str(value)
+            if tool_messages:
+                node_result['tool_messages'] = tool_messages
         
         result[node_name] = node_result
     
     return result
 
 app = FastAPI(title="AI Agent WebSocket Server")
-
+API_DOCUMENTATION = {
+    "title": "AI Agent WebSocket Server API",
+    "version": "1.0.0",
+    "description": "RESTful API and WebSocket server for AI Agent with real-time communication capabilities",
+    "base_url": "http://localhost:8000",
+    "endpoints": {
+        "GET /": {
+            "description": "Serve the main HTML page with WebSocket client interface",
+            "parameters": None,
+            "response": {
+                "type": "HTML",
+                "description": "Complete HTML page with embedded JavaScript for WebSocket client"
+            },
+            "example": {
+                "request": "GET http://localhost:8000/",
+                "response": "HTML page with WebSocket client interface"
+            }
+        },
+        "GET /agentAPIDoc": {
+            "description": "Get comprehensive API documentation",
+            "parameters": None,
+            "response": {
+                "type": "JSON",
+                "description": "Complete API documentation with examples"
+            },
+            "example": {
+                "request": "GET http://localhost:8000/agentAPIDoc",
+                "response": {
+                    "title": "AI Agent WebSocket Server API",
+                    "version": "1.0.0",
+                    "endpoints": {
+                        "GET /": "Main HTML page with WebSocket client interface",
+                        "GET /agentAPIDoc": "API documentation endpoint",
+                        "GET /api/threads": "Get all thread IDs",
+                        "GET /api/health": "Health check endpoint",
+                        "GET /api/thread/{thread_id}": "Get specific thread",
+                        "DELETE /api/thread/{thread_id}": "Delete specific thread",
+                        "WebSocket /ws": "WebSocket endpoint for real-time communication"
+                    }
+                }
+            }
+        },
+        "GET /api/threads": {
+            "description": "Get all distinct thread IDs from the database",
+            "parameters": None,
+            "response": {
+                "type": "JSON",
+                "description": "List of all available thread IDs with metadata",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "threads": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "thread_id": {"type": "string"},
+                                    "created_at": {"type": "string", "format": "datetime"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "example": {
+                "request": "GET http://localhost:8000/api/threads",
+                "response": {
+                    "threads": [
+                        {
+                            "thread_id": "thread_abc123_1640995200000",
+                            "created_at": "2024-01-01T00:00:00Z"
+                        }
+                    ]
+                }
+            }
+        },
+        "GET /api/health": {
+            "description": "Simple health check endpoint",
+            "parameters": None,
+            "response": {
+                "type": "JSON",
+                "description": "Health status of the server and database connection",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ok", "error"]},
+                        "message": {"type": "string"}
+                    }
+                }
+            },
+            "example": {
+                "request": "GET http://localhost:8000/api/health",
+                "response": {
+                    "status": "ok",
+                    "message": "Database connection successful"
+                }
+            }
+        },
+        "GET /api/thread/{thread_id}": {
+            "description": "Get a specific thread by thread_id, returns current state of the chat",
+            "parameters": {
+                "thread_id": {
+                    "type": "string",
+                    "description": "Unique identifier for the thread",
+                    "required": True
+                }
+            },
+            "response": {
+                "type": "JSON",
+                "description": "List of messages in the thread",
+                "schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "type": {"type": "string", "enum": ["human", "ai", "tool"]},
+                            "id": {"type": "string"},
+                            "usage_metadata": {
+                                "type": "object",
+                                "properties": {
+                                    "total_tokens": {"type": "number"},
+                                    "input_tokens": {"type": "number"},
+                                    "output_tokens": {"type": "number"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "example": {
+                "request": "GET http://localhost:8000/api/thread/thread_abc123_1640995200000",
+                "response": [
+                    {
+                        "content": "Hello, how can you help me?",
+                        "type": "human",
+                        "id": "msg1"
+                    },
+                    {
+                        "content": "Hello! I'm here to help you with research, analysis, and various tasks. What would you like to work on?",
+                        "type": "ai",
+                        "id": "msg2",
+                        "usage_metadata": {
+                            "total_tokens": 25,
+                            "input_tokens": 10,
+                            "output_tokens": 15
+                        }
+                    }
+                ]
+            }
+        },
+        "DELETE /api/thread/{thread_id}": {
+            "description": "Delete a specific thread by thread_id",
+            "parameters": {
+                "thread_id": {
+                    "type": "string",
+                    "description": "Unique identifier for the thread to delete",
+                    "required": True
+                }
+            },
+            "response": {
+                "type": "JSON",
+                "description": "Success confirmation",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "success": {"type": "boolean"},
+                        "message": {"type": "string"}
+                    }
+                }
+            },
+            "example": {
+                "request": "DELETE http://localhost:8000/api/thread/thread_abc123_1640995200000",
+                "response": {
+                    "success": True,
+                    "message": "Thread thread_abc123_1640995200000 deleted successfully"
+                }
+            }
+        },
+        "WebSocket /ws": {
+            "description": "WebSocket endpoint for real-time communication with the AI agent",
+            "parameters": None,
+            "connection": {
+                "url": "ws://localhost:8000/ws",
+                "protocol": "WebSocket"
+            },
+            "message_format": {
+                "type": "JSON",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string", "description": "User message content"},
+                        "thread_id": {"type": "string", "description": "Thread ID for conversation context"}
+                    },
+                    "required": ["message"]
+                }
+            },
+            "response_format": {
+                "type": "JSON",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "thread_id": {"type": "string"},
+                        "data": {
+                            "type": "object",
+                            "description": "Workflow chunk data with messages"
+                        }
+                    }
+                }
+            },
+            "example": {
+                "connection": "WebSocket connection to ws://localhost:8000/ws",
+                "send": {
+                    "message": "What is the weather like today?",
+                    "thread_id": "thread_abc123_1640995200000"
+                },
+                "receive": [
+                    {
+                        "thread_id": "thread_abc123_1640995200000",
+                        "data": {
+                            "agent_node": {
+                                "ai_messages": [
+                                    {
+                                        "content": "I'll help you check the weather. Let me search for current weather information.",
+                                        "type": "ai",
+                                        "id": "msg_123",
+                                        "usage_metadata": {
+                                            "total_tokens": 20,
+                                            "input_tokens": 8,
+                                            "output_tokens": 12
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "websocket_client_features": {
+        "description": "Features available in the web client interface",
+        "capabilities": [
+            "Real-time messaging with AI agent",
+            "Thread-based conversation management",
+            "Message history viewing",
+            "Thread creation and deletion",
+            "Token usage tracking",
+            "Auto-reconnection handling"
+        ],
+        "ui_components": {
+            "thread_selector": "Dropdown to select existing threads or create new ones",
+            "message_input": "Text input for sending messages to the AI agent",
+            "message_display": "Formatted display of conversation history",
+            "connection_controls": "Buttons for connect/disconnect functionality",
+            "thread_management": "Buttons for creating and deleting threads"
+        }
+    },
+    "error_responses": {
+        "400": {
+            "description": "Bad Request - Invalid input parameters",
+            "example": {
+                "error": "Invalid thread_id format"
+            }
+        },
+        "404": {
+            "description": "Not Found - Resource does not exist",
+            "example": {
+                "error": "Thread not found"
+            }
+        },
+        "500": {
+            "description": "Internal Server Error",
+            "example": {
+                "error": "Database connection failed"
+            }
+        }
+    }
+}
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
@@ -92,17 +417,45 @@ app.add_middleware(
 
 # Store connected WebSocket clients
 class ConnectionManager:
+    """
+    Manages WebSocket connections for broadcasting messages to all connected clients.
+    
+    This class handles:
+    - Adding new WebSocket connections
+    - Removing disconnected clients
+    - Broadcasting messages to all active connections
+    """
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
 
     async def connect(self, websocket: WebSocket):
+        """
+        Accept and register a new WebSocket connection.
+        
+        Args:
+            websocket: The WebSocket connection to register
+        """
         await websocket.accept()
         self.active_connections.add(websocket)
 
     def disconnect(self, websocket: WebSocket):
+        """
+        Remove a WebSocket connection from the active set.
+        
+        Args:
+            websocket: The WebSocket connection to remove
+        """
         self.active_connections.discard(websocket)
 
     async def broadcast(self, message: str):
+        """
+        Send a message to all connected WebSocket clients.
+        
+        Automatically removes disconnected clients from the active set.
+        
+        Args:
+            message: The message string to broadcast to all clients
+        """
         # Send message to all connected clients
         disconnected = set()
         for connection in self.active_connections:
@@ -119,6 +472,12 @@ manager = ConnectionManager()
 
 @app.get("/")
 async def get_index():
+    """
+    Serve the main HTML page with WebSocket client interface.
+    
+    Returns:
+        HTMLResponse: The main HTML page containing the WebSocket client UI
+    """
     return HTMLResponse("""
     <!DOCTYPE html>
     <html>
@@ -160,6 +519,12 @@ async def get_index():
             button[style*="background-color: #28a745"]:hover { 
                 background-color: #218838 !important; 
             }
+            button[style*="background-color: #dc3545"] { 
+                background-color: #dc3545 !important; 
+            }
+            button[style*="background-color: #dc3545"]:hover { 
+                background-color: #c82333 !important; 
+            }
             .message { 
                 margin: 5px 0; 
                 padding: 5px; 
@@ -183,6 +548,7 @@ async def get_index():
             <button onclick="sendMessage()">Send</button>
             <button onclick="connect()">Connect</button>
             <button onclick="disconnect()">Disconnect</button>
+            <button onclick="deleteCurrentThread()" style="background-color: #dc3545; margin-left: 10px;">Delete Thread</button>
         </div>
         <div id="messages"></div>
 
@@ -201,44 +567,66 @@ async def get_index():
             }
 
             function addFormattedMessage(data) {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = 'message';
-                
                 if (typeof data === 'string') {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message';
                     messageDiv.textContent = data;
+                    messagesDiv.appendChild(messageDiv);
                 } else {
-                    // Handle JSON data from workflow chunks
-                    let formattedText = '';
+                    // Handle JSON data from workflow chunks - display messages consistently with loadThread
                     for (const [nodeName, nodeData] of Object.entries(data)) {
-                        formattedText += `[${nodeName}] `;
-                        
+                        // Display AI messages
                         if (nodeData.ai_messages && nodeData.ai_messages.length > 0) {
-                            formattedText += 'AI: ';
                             nodeData.ai_messages.forEach(msg => {
-                                formattedText += msg.content + ' ';
+                                let aiMessage = `🤖 AI: ${msg.content}`;
+                                
+                                // Add usage metadata if available (for token count, etc.)
+                                if (msg.usage_metadata) {
+                                    const tokens = msg.usage_metadata.total_tokens || msg.usage_metadata.input_tokens || 0;
+                                    if (tokens > 0) {
+                                        aiMessage += ` (${tokens} tokens)`;
+                                    }
+                                }
+                                
+                                const messageDiv = document.createElement('div');
+                                messageDiv.className = 'message';
+                                messageDiv.textContent = aiMessage;
+                                messagesDiv.appendChild(messageDiv);
                             });
                         }
                         
+                        // Display Human messages
                         if (nodeData.human_messages && nodeData.human_messages.length > 0) {
-                            formattedText += 'Human: ';
                             nodeData.human_messages.forEach(msg => {
-                                formattedText += msg.content + ' ';
+                                const messageDiv = document.createElement('div');
+                                messageDiv.className = 'message';
+                                messageDiv.textContent = `👤 Human: ${msg.content}`;
+                                messagesDiv.appendChild(messageDiv);
                             });
                         }
                         
-                        // Add other data
+                        // Display Tool messages (AI thinking in mind)
+                        if (nodeData.tool_messages && nodeData.tool_messages.length > 0) {
+                            nodeData.tool_messages.forEach(msg => {
+                                const messageDiv = document.createElement('div');
+                                messageDiv.className = 'message';
+                                messageDiv.textContent = `🧠 ${msg.content}`;
+                                messagesDiv.appendChild(messageDiv);
+                            });
+                        }
+                        
+                        // Add other data as separate messages (for debugging/workflow info)
                         for (const [key, value] of Object.entries(nodeData)) {
-                            if (key !== 'ai_messages' && key !== 'human_messages') {
-                                formattedText += key + ': ' + value + ' ';
+                            if (key !== 'ai_messages' && key !== 'human_messages' && key !== 'tool_messages') {
+                                const messageDiv = document.createElement('div');
+                                messageDiv.className = 'message';
+                                messageDiv.textContent = `[${nodeName}] ${key}: ${value}`;
+                                messagesDiv.appendChild(messageDiv);
                             }
                         }
-                        
-                        formattedText += '\\n';
                     }
-                    messageDiv.textContent = formattedText;
                 }
                 
-                messagesDiv.appendChild(messageDiv);
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
             }
 
@@ -323,6 +711,8 @@ async def get_index():
                                 }
                                 
                                 addMessage(aiMessage);
+                            } else if (msg.type === 'tool') {
+                                addMessage(`🧠 ${msg.content}`);
                             }
                         });
                         
@@ -356,6 +746,55 @@ async def get_index():
                 addMessage(`Started new conversation with thread ID: ${newThreadId}`);
             }
 
+            async function deleteCurrentThread() {
+                const threadId = threadSelect.value;
+                if (!threadId) {
+                    addMessage('Please select a thread to delete');
+                    return;
+                }
+                
+                // Confirm deletion
+                if (!confirm(`Are you sure you want to delete thread "${threadId}"? This action cannot be undone.`)) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/thread/${threadId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        addMessage(`Thread "${threadId}" deleted successfully`);
+                        
+                        // Remove from dropdown
+                        const optionToRemove = threadSelect.querySelector(`option[value="${threadId}"]`);
+                        if (optionToRemove) {
+                            optionToRemove.remove();
+                        }
+                        
+                        // Clear messages
+                        messagesDiv.innerHTML = '';
+                        
+                        // Select first available thread or clear selection
+                        if (threadSelect.options.length > 1) {
+                            threadSelect.selectedIndex = 1;
+                            loadThread();
+                        } else {
+                            threadSelect.value = '';
+                        }
+                        
+                        // Refresh threads list
+                        loadThreads();
+                    } else {
+                        const errorData = await response.json();
+                        addMessage(`Error deleting thread: ${errorData.error || 'Unknown error'}`);
+                    }
+                } catch (error) {
+                    console.error('Error deleting thread:', error);
+                    addMessage(`Error deleting thread: ${error.message}`);
+                }
+            }
+
             function connect() {
                 if (ws === null || ws.readyState === WebSocket.CLOSED) {
                     ws = new WebSocket('ws://localhost:8000/ws');
@@ -368,7 +807,20 @@ async def get_index():
                         try {
                             // Try to parse as JSON
                             const data = JSON.parse(event.data);
-                            addFormattedMessage(data);
+                            
+                            // Check if this is a message with thread_id (new format)
+                            if (data.thread_id) {
+                                const currentThreadId = threadSelect.value;
+                                // Only show message if it matches the current thread
+                                if (data.thread_id === currentThreadId) {
+                                    addFormattedMessage(data.data);
+                                } else {
+                                    console.log('Skipping message for thread:', data.thread_id, 'Current thread:', currentThreadId);
+                                }
+                            } else {
+                                // Legacy format without thread_id - show to all
+                                addFormattedMessage(data);
+                            }
                         } catch (e) {
                             // If not JSON, treat as plain text
                             addMessage('Server: ' + event.data);
@@ -424,6 +876,16 @@ async def get_index():
     </html>
     """)
 
+@app.get("/agentAPIDoc")
+async def get_api_documentation():
+    """
+    Get comprehensive API documentation for all available endpoints.
+    
+    Returns:
+        JSON: Complete API documentation with examples, schemas, and usage instructions
+    """
+    return API_DOCUMENTATION
+
 @app.get("/api/threads")
 async def get_threads_endpoint():
     """
@@ -462,7 +924,7 @@ async def health_check():
 @app.get("/api/thread/{thread_id}")
 async def get_thread_endpoint(thread_id: str):
     """
-    Get a specific thread by thread_id
+    Get a specific thread by thread_id, returns current state of the chat.
     """
     try:
         # Call the synchronous function directly
@@ -475,9 +937,33 @@ async def get_thread_endpoint(thread_id: str):
         print(f"Error in get_thread_endpoint: {e}")
         return {"error": f"Failed to fetch thread: {str(e)}"}
 
+@app.delete("/api/thread/{thread_id}")
+async def delete_thread_endpoint(thread_id: str):
+    """
+    Delete a specific thread by thread_id
+    """
+    try:
+        # Import the async version
+        from AI_Agent.basic_agent import delete_thread as delete_thread_async
+        result = await delete_thread_async(thread_id)
+        return {"success": True, "message": f"Thread {thread_id} deleted successfully"}
+    except Exception as e:
+        print(f"Error in delete_thread_endpoint: {e}")
+        return {"error": f"Failed to delete thread: {str(e)}"}
+
 def process_thread_result(result):
     """
-    Process thread result to extract only human and AI messages
+    Process thread result to extract only human and AI messages.
+    
+    This function processes the raw result from the agent workflow and extracts
+    only meaningful messages (human, AI, and write_todos tool messages) while
+    filtering out empty content and other tool messages.
+    
+    Args:
+        result: The raw result from the agent workflow (can be CheckpointTuple, list, or dict)
+        
+    Returns:
+        list: Filtered list of message dictionaries with type, content, and metadata
     """
     print(f"Processing result type: {type(result)}")
     print(f"Result: {result}")
@@ -526,7 +1012,7 @@ def process_thread_result(result):
                     usage_metadata = msg.get('usage_metadata')
                     tool_calls = msg.get('tool_calls', [])
                 
-                # Include human messages and AI messages without tool calls
+                # Include human messages, AI messages with non-empty content, and write_todos tool messages with non-empty content
                 if msg_type == 'human':
                     clean_msg = {
                         'content': content,
@@ -535,7 +1021,7 @@ def process_thread_result(result):
                     }
                     filtered_messages.append(clean_msg)
                     print(f"Added human message: {clean_msg}")
-                elif msg_type == 'ai' and (not tool_calls or len(tool_calls) == 0):
+                elif msg_type == 'ai' and content and content.strip():
                     clean_msg = {
                         'content': content,
                         'type': msg_type,
@@ -547,9 +1033,27 @@ def process_thread_result(result):
                         clean_msg['usage_metadata'] = usage_metadata
                     
                     filtered_messages.append(clean_msg)
-                    print(f"Added AI message (no tool calls): {clean_msg}")
-                elif msg_type == 'ai' and tool_calls and len(tool_calls) > 0:
-                    print(f"Skipping AI message with tool calls: {msg_id}")
+                    print(f"Added AI message (non-empty content): {clean_msg}")
+                elif msg_type == 'tool' and content and content.strip():
+                    # Check if this is a write_todos tool message
+                    tool_name = None
+                    if hasattr(msg, 'name'):
+                        tool_name = getattr(msg, 'name', None)
+                    elif isinstance(msg, dict):
+                        tool_name = msg.get('name')
+                    
+                    if tool_name == 'write_todos':
+                        clean_msg = {
+                            'content': content,
+                            'type': msg_type,
+                            'id': msg_id
+                        }
+                        filtered_messages.append(clean_msg)
+                        print(f"Added write_todos tool message: {clean_msg}")
+                    else:
+                        print(f"Skipping tool message from {tool_name}: {msg_id}")
+                elif msg_type in ['ai', 'tool'] and (not content or not content.strip()):
+                    print(f"Skipping {msg_type} message with empty content: {msg_id}")
             
             print(f"Returning {len(filtered_messages)} filtered messages")
             return filtered_messages
@@ -562,6 +1066,20 @@ def process_thread_result(result):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time communication with the AI agent.
+    
+    This endpoint handles:
+    - Real-time message streaming from the AI agent
+    - Thread-based conversation management
+    - Workflow execution and chunk streaming
+    
+    Args:
+        websocket: The WebSocket connection
+        
+    Raises:
+        WebSocketDisconnect: When the client disconnects
+    """
     await manager.connect(websocket)
     try:
         while True:
@@ -595,7 +1113,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 async for chunk in invoke_workflow_stream(thread_id, messages):
                     # Extract meaningful content and convert to clean JSON
                     clean_chunk = extract_meaningful_content(chunk)
-                    await websocket.send_text(json.dumps(clean_chunk))
+                    # Include thread_id in the message for client-side filtering
+                    message_with_thread = {
+                        'thread_id': thread_id,
+                        'data': clean_chunk
+                    }
+                    await websocket.send_text(json.dumps(message_with_thread))
                     
             except Exception as e:
                 await websocket.send_text(f"Error running workflow: {str(e)}")
