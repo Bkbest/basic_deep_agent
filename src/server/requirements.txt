@@ -6,3 +6,4 @@ asyncpg
 langchain
 langchain-ollama
 langgraph
+tavily-python
