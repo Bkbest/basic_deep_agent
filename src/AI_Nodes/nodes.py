@@ -16,6 +16,7 @@ def is_tool_required(state: State):
     lastMessage = messages[-1]  
     
     if hasattr(lastMessage,"tool_calls") and lastMessage.tool_calls:
+        print(lastMessage)
         return "tool_node"
     else:
         print("Tool not required")

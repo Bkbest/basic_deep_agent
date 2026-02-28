@@ -1,7 +1,7 @@
 import asyncio
 import json
 import sys
-from typing import Set, Any
+from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -415,60 +415,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Store connected WebSocket clients
-class ConnectionManager:
-    """
-    Manages WebSocket connections for broadcasting messages to all connected clients.
-    
-    This class handles:
-    - Adding new WebSocket connections
-    - Removing disconnected clients
-    - Broadcasting messages to all active connections
-    """
-    def __init__(self):
-        self.active_connections: Set[WebSocket] = set()
 
-    async def connect(self, websocket: WebSocket):
-        """
-        Accept and register a new WebSocket connection.
-        
-        Args:
-            websocket: The WebSocket connection to register
-        """
-        await websocket.accept()
-        self.active_connections.add(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        """
-        Remove a WebSocket connection from the active set.
-        
-        Args:
-            websocket: The WebSocket connection to remove
-        """
-        self.active_connections.discard(websocket)
-
-    async def broadcast(self, message: str):
-        """
-        Send a message to all connected WebSocket clients.
-        
-        Automatically removes disconnected clients from the active set.
-        
-        Args:
-            message: The message string to broadcast to all clients
-        """
-        # Send message to all connected clients
-        disconnected = set()
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except:
-                disconnected.add(connection)
-        
-        # Remove disconnected clients
-        for connection in disconnected:
-            self.disconnect(connection)
-
-manager = ConnectionManager()
 
 @app.get("/")
 async def get_index():
@@ -546,14 +493,16 @@ async def get_index():
         <div>
             <input type="text" id="input" placeholder="Enter your message..." />
             <button onclick="sendMessage()">Send</button>
-            <button onclick="connect()">Connect</button>
-            <button onclick="disconnect()">Disconnect</button>
+            <button onclick="connect()">Connect Thread</button>
+            <button onclick="disconnect()">Disconnect Thread</button>
+            <button onclick="disconnectAll()" style="background-color: #6c757d; margin-left: 5px;">Disconnect All</button>
             <button onclick="deleteCurrentThread()" style="background-color: #dc3545; margin-left: 10px;">Delete Thread</button>
         </div>
         <div id="messages"></div>
 
         <script>
-            let ws = null;
+            // Map to store WebSocket connections per thread
+            const threadConnections = new Map();
             const messagesDiv = document.getElementById('messages');
             const input = document.getElementById('input');
             const threadSelect = document.getElementById('threadSelect');
@@ -721,6 +670,12 @@ async def get_index():
                     } else {
                         addMessage('No conversation found for this thread');
                     }
+
+                    // Automatically connect to this thread when switching
+                    // This ensures smooth thread switching with one connection per thread
+                    console.log(`Switching to thread: ${threadId}`);
+                    connectThread();
+                    
                 } catch (error) {
                     console.error('Error loading thread:', error);
                     addMessage('Error loading thread: ' + error.message);
@@ -744,6 +699,9 @@ async def get_index():
                 threadSelect.appendChild(option);
                 
                 addMessage(`Started new conversation with thread ID: ${newThreadId}`);
+                
+                // Automatically connect to the new thread
+                connectThread();
             }
 
             async function deleteCurrentThread() {
@@ -765,6 +723,16 @@ async def get_index():
                     
                     if (response.ok) {
                         addMessage(`Thread "${threadId}" deleted successfully`);
+                        
+                        // Close and remove connection for this thread
+                        if (threadConnections.has(threadId)) {
+                            const connection = threadConnections.get(threadId);
+                            if (connection && connection.readyState === WebSocket.OPEN) {
+                                connection.close();
+                            }
+                            threadConnections.delete(threadId);
+                            console.log(`Closed connection for deleted thread: ${threadId}`);
+                        }
                         
                         // Remove from dropdown
                         const optionToRemove = threadSelect.querySelector(`option[value="${threadId}"]`);
@@ -795,67 +763,135 @@ async def get_index():
                 }
             }
 
-            function connect() {
-                if (ws === null || ws.readyState === WebSocket.CLOSED) {
-                    ws = new WebSocket('ws://localhost:8000/ws');
-                    
-                    ws.onopen = function(event) {
-                        addMessage('Connected to server');
-                    };
-
-                    ws.onmessage = function(event) {
-                        try {
-                            // Try to parse as JSON
-                            const data = JSON.parse(event.data);
-                            
-                            // Check if this is a message with thread_id (new format)
-                            if (data.thread_id) {
-                                const currentThreadId = threadSelect.value;
-                                // Only show message if it matches the current thread
-                                if (data.thread_id === currentThreadId) {
-                                    addFormattedMessage(data.data);
-                                } else {
-                                    console.log('Skipping message for thread:', data.thread_id, 'Current thread:', currentThreadId);
-                                }
-                            } else {
-                                // Legacy format without thread_id - show to all
-                                addFormattedMessage(data);
-                            }
-                        } catch (e) {
-                            // If not JSON, treat as plain text
-                            addMessage('Server: ' + event.data);
-                        }
-                    };
-
-                    ws.onclose = function(event) {
-                        addMessage('Disconnected from server');
-                    };
-
-                    ws.onerror = function(error) {
-                        addMessage('Error: ' + error);
-                    };
+            function connectThread() {
+                // Always use the global thread ID from dropdown selection
+                const threadId = threadSelect.value;
+                
+                if (!threadId) {
+                    addMessage('Please select a thread first');
+                    return null;
                 }
+
+                // Check if connection already exists and is active
+                if (threadConnections.has(threadId)) {
+                    const existingConnection = threadConnections.get(threadId);
+                    if (existingConnection && existingConnection.readyState === WebSocket.OPEN) {
+                        console.log(`Using existing connection for thread: ${threadId}`);
+                        return existingConnection;
+                    }
+                }
+
+                // Create new connection for this thread
+                console.log(`Creating new connection for thread: ${threadId}`);
+                const ws = new WebSocket('ws://localhost:8000/ws');
+                
+                ws.onopen = function(event) {
+                    console.log(`Connected to server for thread: ${threadId}`);
+                    addMessage(`🔗 Connected to thread: ${threadId}`);
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        // Try to parse as JSON
+                        const data = JSON.parse(event.data);
+                        
+                        // Check if this is a message with thread_id (new format)
+                        if (data.thread_id) {
+                            // Only show message if it matches this thread's connection
+                            if (data.thread_id === threadSelect.value) {
+                                addFormattedMessage(data.data);
+                            } else {
+                                console.log('Skipping message for thread:', data.thread_id, 'Expected thread:', threadId);
+                            }
+                        } else {
+                            // Legacy format without thread_id - show to all
+                            addFormattedMessage(data);
+                        }
+                    } catch (e) {
+                        // If not JSON, treat as plain text
+                        addMessage('Server: ' + event.data);
+                    }
+                };
+
+                ws.onclose = function(event) {
+                    console.log(`Disconnected from server for thread: ${threadId}`);
+                    addMessage(`❌ Disconnected from thread: ${threadId}`);
+                    // Remove from connections map when closed
+                    threadConnections.delete(threadId);
+                };
+
+                ws.onerror = function(error) {
+                    console.error(`WebSocket error for thread ${threadId}:`, error);
+                    addMessage(`❌ Error in thread ${threadId}: ` + error);
+                };
+
+                // Store the connection in our map
+                threadConnections.set(threadId, ws);
+                return ws;
+            }
+
+            function connect() {
+                connectThread();
             }
 
             function disconnect() {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.close();
+                const selectedThreadId = threadSelect.value;
+                if (!selectedThreadId) {
+                    addMessage('Please select a thread to disconnect');
+                    return;
                 }
+
+                if (threadConnections.has(selectedThreadId)) {
+                    const connection = threadConnections.get(selectedThreadId);
+                    if (connection && connection.readyState === WebSocket.OPEN) {
+                        connection.close();
+                        threadConnections.delete(selectedThreadId);
+                        addMessage(`🔌 Disconnected from thread: ${selectedThreadId}`);
+                    }
+                } else {
+                    addMessage('No active connection found for this thread');
+                }
+            }
+
+            function disconnectAll() {
+                // Close all connections
+                for (const [threadId, connection] of threadConnections) {
+                    if (connection && connection.readyState === WebSocket.OPEN) {
+                        connection.close();
+                    }
+                }
+                threadConnections.clear();
+                addMessage('🔌 Disconnected from all threads');
             }
 
             function sendMessage() {
                 const message = input.value;
                 const selectedThreadId = threadSelect.value;
                 
-                if (message && ws && ws.readyState === WebSocket.OPEN) {
-                    // Send message with thread_id if selected
+                if (!selectedThreadId) {
+                    addMessage('Please select a thread first');
+                    return;
+                }
+
+                if (!message) {
+                    addMessage('Please enter a message');
+                    return;
+                }
+
+                // Get or create connection for this thread
+                const ws = connectThread();
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // Send message with thread_id
                     const messageData = {
                         message: message,
-                        thread_id: selectedThreadId || "1"
+                        thread_id: selectedThreadId
                     };
                     ws.send(JSON.stringify(messageData));
-                    addMessage('You: ' + message);
+                    addMessage(`📤 You (${selectedThreadId}): ${message}`);
                     input.value = '';
+                } else {
+                    addMessage(`❌ Cannot send message - not connected to thread: ${selectedThreadId}`);
                 }
             }
 
@@ -866,9 +902,8 @@ async def get_index():
                 }
             });
 
-            // Auto-connect and load threads on page load
+            // Load threads on page load (connections will be created per thread as needed)
             window.onload = function() {
-                connect();
                 loadThreads();
             };
         </script>
@@ -1074,13 +1109,15 @@ async def websocket_endpoint(websocket: WebSocket):
     - Thread-based conversation management
     - Workflow execution and chunk streaming
     
+    Direct point-to-point communication without global connection management.
+    
     Args:
         websocket: The WebSocket connection
         
     Raises:
         WebSocketDisconnect: When the client disconnects
     """
-    await manager.connect(websocket)
+    await websocket.accept()
     try:
         while True:
             # Receive message from client
@@ -1124,7 +1161,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text(f"Error running workflow: {str(e)}")
                 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        # Client disconnected - no need to manage global state
+        pass
 
 if __name__ == "__main__":
     print("Starting WebSocket server on http://localhost:8000")
