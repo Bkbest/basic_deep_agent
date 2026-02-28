@@ -7,3 +7,4 @@ langchain
 langchain-ollama
 langgraph
 tavily-python
+langchain_mcp_adapters
