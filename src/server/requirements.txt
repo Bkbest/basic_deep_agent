@@ -3,3 +3,6 @@ uvicorn[standard]
 websockets
 python-multipart
 asyncpg
+langchain
+langchain-ollama
+langgraph
