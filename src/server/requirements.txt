@@ -12,4 +12,5 @@ langmem
 langgraph-checkpoint-postgres
 python-jose[cryptography]
 passlib[bcrypt]
+argon2-cffi
 
