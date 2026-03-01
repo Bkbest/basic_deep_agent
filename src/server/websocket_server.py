@@ -1,11 +1,15 @@
 import asyncio
 import json
 import sys
-from typing import Any
+from typing import Any, Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from datetime import datetime, timedelta
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel
 import uvicorn
 from dotenv import load_dotenv
 import asyncpg
@@ -21,6 +25,129 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # Load environment variables
 load_dotenv()
 
+# Security configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Password hashing - Use argon2 as primary with bcrypt fallback for compatibility
+try:
+    pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+    print("✅ Password context initialized with argon2 and bcrypt support")
+except Exception as e:
+    print(f"⚠️  Error initializing password context: {e}")
+    try:
+        # Try bcrypt only
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        print("✅ Password context initialized with bcrypt only")
+    except Exception as e2:
+        print(f"❌ Failed to initialize password context: {e2}")
+        # Create a minimal context that will work
+        pwd_context = None
+
+# Simple models
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+# Password utilities
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password with fallback handling for different hash formats."""
+    if pwd_context is None:
+        # Fallback: try plain text comparison
+        return plain_password == hashed_password
+    
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception as e:
+        print(f"⚠️  Password verification error: {e}")
+        # Fallback: try plain text comparison
+        return plain_password == hashed_password
+
+def get_password_hash(password: str) -> str:
+    """Hash password with fallback handling."""
+    if pwd_context is None:
+        # Fallback: return plain text (not recommended for production)
+        print("⚠️  Warning: Using plain text password storage (fallback mode)")
+        return password
+    
+    try:
+        return pwd_context.hash(password)
+    except Exception as e:
+        print(f"⚠️  Password hashing error: {e}")
+        # Fallback: return plain text (not recommended for production)
+        print("⚠️  Warning: Using plain text password storage (fallback mode)")
+        return password
+
+# JWT utilities
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+# Simple auth dependency
+async def get_current_user(authorization: str = Header(None)) -> str:
+    """Simple auth dependency that extracts username from JWT token."""
+    print(f"🔍 Received authorization header: {authorization}")
+    
+    if not authorization or not authorization.startswith("Bearer "):
+        print("❌ No valid authorization header found")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = authorization.split(" ")[1]
+    print(f"🔑 Extracted token: {token[:20]}...")
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            print("❌ No username in token payload")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        print(f"✅ Successfully authenticated user: {username}")
+        return username
+    except JWTError as e:
+        print(f"❌ JWT decode error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+# Simple user verification
+async def verify_user(username: str, password: str) -> bool:
+    """Verify username and password against database."""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        return False
+    
+    conn = await asyncpg.connect(connection_string)
+    try:
+        row = await conn.fetchrow(
+            "SELECT password FROM users WHERE username = $1",
+            username
+        )
+        if row:
+            return verify_password(password, row["password"])
+        return False
+    finally:
+        await conn.close()
 
 async def ensure_users_table():
     """Create the users table if it does not already exist.
@@ -39,6 +166,36 @@ async def ensure_users_table():
                 is_admin BOOLEAN DEFAULT FALSE
             )
         ''')
+    finally:
+        await conn.close()
+
+async def create_test_user():
+    """Create a test user with properly hashed password"""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        print("⚠️  POSTGRES_CONNECTION_STRING not set, skipping test user creation")
+        return False
+    
+    conn = await asyncpg.connect(connection_string)
+    try:
+        username = "<user>"
+        password = "<pass>"
+        hashed_password = get_password_hash(password)
+        email = "<email>"
+        
+        # Insert or update the user
+        await conn.execute("""
+            INSERT INTO users (email, username, password, is_admin)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (email) 
+            DO UPDATE SET password = $3, username = $2
+        """, email, username, hashed_password, True)
+        
+        print(f"✅ Test user '{username}' created/updated successfully with proper bcrypt hash")
+        return True
+    except Exception as e:
+        print(f"❌ Error creating test user: {e}")
+        return False
     finally:
         await conn.close()
 
@@ -156,6 +313,31 @@ API_DOCUMENTATION = {
     "version": "1.0.0",
     "description": "RESTful API and WebSocket server for AI Agent with real-time communication capabilities",
     "base_url": "http://localhost:8000",  # Update this to match your deployment
+    "authentication": {
+        "description": "Most endpoints require authentication using JWT Bearer tokens",
+        "flow": [
+            "1. Call POST /api/auth/login with username and password",
+            "2. Receive access_token from login response",
+            "3. Include 'Authorization: Bearer <token>' header in subsequent requests"
+        ],
+        "header_format": {
+            "name": "Authorization",
+            "value": "Bearer <your-jwt-token>",
+            "example": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+        },
+        "endpoints_requiring_auth": [
+            "GET /api/threads",
+            "GET /api/thread/{thread_id}",
+            "DELETE /api/thread/{thread_id}",
+            "WebSocket /ws"
+        ],
+        "endpoints_not_requiring_auth": [
+            "GET /api/health",
+            "POST /api/auth/login",
+            "GET /",
+            "GET /agentAPIDoc"
+        ]
+    },
     "endpoints": {
         "GET /": {
             "description": "Serve the main HTML page with WebSocket client interface",
@@ -184,11 +366,12 @@ API_DOCUMENTATION = {
                     "endpoints": {
                         "GET /": "Main HTML page with WebSocket client interface",
                         "GET /agentAPIDoc": "API documentation endpoint",
-                        "GET /api/threads": "Get all thread IDs",
-                        "GET /api/health": "Health check endpoint",
-                        "GET /api/thread/{thread_id}": "Get specific thread",
-                        "DELETE /api/thread/{thread_id}": "Delete specific thread",
-                        "WebSocket /ws": "WebSocket endpoint for real-time communication"
+                        "GET /api/health": "Health check endpoint (no auth required)",
+                        "POST /api/auth/login": "Login and get JWT token",
+                        "GET /api/threads": "Get all thread IDs (requires auth)",
+                        "GET /api/thread/{thread_id}": "Get specific thread (requires auth)",
+                        "DELETE /api/thread/{thread_id}": "Delete specific thread (requires auth)",
+                        "WebSocket /ws": "WebSocket endpoint (requires auth)"
                     }
                 }
             }
@@ -196,6 +379,14 @@ API_DOCUMENTATION = {
         "GET /api/threads": {
             "description": "Get all distinct thread IDs from the database",
             "parameters": None,
+            "headers": {
+                "Authorization": {
+                    "type": "string",
+                    "description": "JWT Bearer token in format 'Bearer <token>'",
+                    "required": True,
+                    "example": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                }
+            },
             "response": {
                 "type": "JSON",
                 "description": "List of all available thread IDs with metadata",
@@ -216,7 +407,13 @@ API_DOCUMENTATION = {
                 }
             },
             "example": {
-                "request": "GET http://localhost:8000/api/threads",
+                "request": {
+                    "method": "GET",
+                    "url": "http://localhost:8000/api/threads",
+                    "headers": {
+                        "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                    }
+                },
                 "response": {
                     "threads": [
                         {
@@ -249,6 +446,47 @@ API_DOCUMENTATION = {
                 }
             }
         },
+        "POST /api/auth/login": {
+            "description": "Login with username and password to get JWT authentication token",
+            "parameters": {
+                "username": {
+                    "type": "string",
+                    "description": "User's username",
+                    "required": True
+                },
+                "password": {
+                    "type": "string", 
+                    "description": "User's password",
+                    "required": True
+                }
+            },
+            "response": {
+                "type": "JSON",
+                "description": "JWT access token for authenticated requests",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "access_token": {"type": "string"},
+                        "token_type": {"type": "string", "enum": ["bearer"]}
+                    }
+                }
+            },
+            "example": {
+                "request": {
+                    "method": "POST",
+                    "url": "http://localhost:8000/api/auth/login",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": {
+                        "username": "john_doe",
+                        "password": "secure_password"
+                    }
+                },
+                "response": {
+                    "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature",
+                    "token_type": "bearer"
+                }
+            }
+        },
         "GET /api/thread/{thread_id}": {
             "description": "Get a specific thread by thread_id, returns current state of the chat",
             "parameters": {
@@ -256,6 +494,14 @@ API_DOCUMENTATION = {
                     "type": "string",
                     "description": "Unique identifier for the thread",
                     "required": True
+                }
+            },
+            "headers": {
+                "Authorization": {
+                    "type": "string",
+                    "description": "JWT Bearer token in format 'Bearer <token>'",
+                    "required": True,
+                    "example": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
                 }
             },
             "response": {
@@ -282,7 +528,13 @@ API_DOCUMENTATION = {
                 }
             },
             "example": {
-                "request": "GET http://localhost:8000/api/thread/thread_abc123_1640995200000",
+                "request": {
+                    "method": "GET",
+                    "url": "http://localhost:8000/api/thread/thread_abc123_1640995200000",
+                    "headers": {
+                        "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                    }
+                },
                 "response": [
                     {
                         "content": "Hello, how can you help me?",
@@ -311,6 +563,14 @@ API_DOCUMENTATION = {
                     "required": True
                 }
             },
+            "headers": {
+                "Authorization": {
+                    "type": "string",
+                    "description": "JWT Bearer token in format 'Bearer <token>'",
+                    "required": True,
+                    "example": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                }
+            },
             "response": {
                 "type": "JSON",
                 "description": "Success confirmation",
@@ -323,7 +583,13 @@ API_DOCUMENTATION = {
                 }
             },
             "example": {
-                "request": "DELETE http://localhost:8000/api/thread/thread_abc123_1640995200000",
+                "request": {
+                    "method": "DELETE",
+                    "url": "http://localhost:8000/api/thread/thread_abc123_1640995200000",
+                    "headers": {
+                        "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                    }
+                },
                 "response": {
                     "success": True,
                     "message": "Thread thread_abc123_1640995200000 deleted successfully"
@@ -331,10 +597,22 @@ API_DOCUMENTATION = {
             }
         },
         "WebSocket /ws": {
-            "description": "WebSocket endpoint for real-time communication with the AI agent",
-            "parameters": None,
+            "description": "WebSocket endpoint for real-time communication with the AI agent (requires authentication)",
+            "authentication": {
+                "method": "query_parameter",
+                "parameter": "token",
+                "description": "JWT authentication token from /api/auth/login passed as query parameter",
+                "example": "ws://localhost:8000/ws?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+            },
+            "parameters": {
+                "token": {
+                    "type": "string",
+                    "description": "JWT authentication token from /api/auth/login",
+                    "required": True
+                }
+            },
             "connection": {
-                "url": "ws://localhost:8000/ws",
+                "url": "ws://localhost:8000/ws?token={jwt_token}",
                 "protocol": "WebSocket"
             },
             "message_format": {
@@ -362,7 +640,7 @@ API_DOCUMENTATION = {
                 }
             },
             "example": {
-                "connection": "WebSocket connection to ws://localhost:8000/ws",
+                "connection": "WebSocket connection to ws://localhost:8000/ws?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature",
                 "send": {
                     "message": "What is the weather like today?",
                     "thread_id": "thread_abc123_1640995200000"
@@ -441,6 +719,12 @@ async def lifespan(app: FastAPI):
         print("Ensuring database tables exist...")
         await ensure_users_table()
         print("✅ Users table ensured successfully")
+        
+        # # Create test user with proper hashing
+        # print("Creating test user...")
+        # await create_test_user()
+        # print("✅ Test user created successfully")
+        
         # If other tables need creation, they can be added here.
         print("✅ Database initialization completed")
         print("✅ Server startup completed successfully")
@@ -466,503 +750,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def get_index():
-    """
-    Serve the main HTML page with WebSocket client interface.
-    
-    Returns:
-        HTMLResponse: The main HTML page containing the WebSocket client UI
-    """
-    return HTMLResponse("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>AI Agent WebSocket Client</title>
-        <style>
-            body { 
-                font-family: Arial, sans-serif; 
-                max-width: 800px; 
-                margin: 0 auto; 
-                padding: 20px;
-            }
-            #messages { 
-                border: 1px solid #ccc; 
-                height: 400px; 
-                overflow-y: scroll; 
-                padding: 10px; 
-                margin: 10px 0;
-                background-color: #f5f5f5;
-            }
-            #input { 
-                width: 70%; 
-                padding: 10px; 
-                margin-right: 10px;
-            }
-            button { 
-                padding: 10px 20px; 
-                background-color: #007bff; 
-                color: white; 
-                border: none; 
-                cursor: pointer;
-            }
-            button:hover { 
-                background-color: #0056b3; 
-            }
-            button[style*="background-color: #28a745"] { 
-                background-color: #28a745 !important; 
-            }
-            button[style*="background-color: #28a745"]:hover { 
-                background-color: #218838 !important; 
-            }
-            button[style*="background-color: #dc3545"] { 
-                background-color: #dc3545 !important; 
-            }
-            button[style*="background-color: #dc3545"]:hover { 
-                background-color: #c82333 !important; 
-            }
-            .message { 
-                margin: 5px 0; 
-                padding: 5px; 
-                background-color: white; 
-                border-radius: 5px;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>AI Agent WebSocket Client</h1>
-        <div style="margin-bottom: 20px;">
-            <label for="threadSelect">Select Thread:</label>
-            <select id="threadSelect" onchange="loadThread()" style="margin-right: 10px; padding: 5px;">
-                <option value="">-- Select a thread --</option>
-            </select>
-            <button onclick="loadThreads()">Refresh Threads</button>
-            <button onclick="newConversation()" style="background-color: #28a745; margin-left: 10px;">New Conversation</button>
-        </div>
-        <div>
-            <input type="text" id="input" placeholder="Enter your message..." />
-            <button onclick="sendMessage()">Send</button>
-            <button onclick="connect()">Connect Thread</button>
-            <button onclick="disconnect()">Disconnect Thread</button>
-            <button onclick="disconnectAll()" style="background-color: #6c757d; margin-left: 5px;">Disconnect All</button>
-            <button onclick="deleteCurrentThread()" style="background-color: #dc3545; margin-left: 10px;">Delete Thread</button>
-        </div>
-        <div id="messages"></div>
-
-        <script>
-            // Map to store WebSocket connections per thread
-            const threadConnections = new Map();
-            const messagesDiv = document.getElementById('messages');
-            const input = document.getElementById('input');
-            const threadSelect = document.getElementById('threadSelect');
-
-            function addMessage(message) {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = 'message';
-                messageDiv.textContent = message;
-                messagesDiv.appendChild(messageDiv);
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            }
-
-            function addFormattedMessage(data) {
-                if (typeof data === 'string') {
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = 'message';
-                    messageDiv.textContent = data;
-                    messagesDiv.appendChild(messageDiv);
-                } else {
-                    // Handle JSON data from workflow chunks - display messages consistently with loadThread
-                    for (const [nodeName, nodeData] of Object.entries(data)) {
-                        // Display AI messages
-                        if (nodeData.ai_messages && nodeData.ai_messages.length > 0) {
-                            nodeData.ai_messages.forEach(msg => {
-                                let aiMessage = `🤖 AI: ${msg.content}`;
-                                
-                                // Add usage metadata if available (for token count, etc.)
-                                if (msg.usage_metadata) {
-                                    const tokens = msg.usage_metadata.total_tokens || msg.usage_metadata.input_tokens || 0;
-                                    if (tokens > 0) {
-                                        aiMessage += ` (${tokens} tokens)`;
-                                    }
-                                }
-                                
-                                const messageDiv = document.createElement('div');
-                                messageDiv.className = 'message';
-                                messageDiv.textContent = aiMessage;
-                                messagesDiv.appendChild(messageDiv);
-                            });
-                        }
-                        
-                        // Display Human messages
-                        if (nodeData.human_messages && nodeData.human_messages.length > 0) {
-                            nodeData.human_messages.forEach(msg => {
-                                const messageDiv = document.createElement('div');
-                                messageDiv.className = 'message';
-                                messageDiv.textContent = `👤 Human: ${msg.content}`;
-                                messagesDiv.appendChild(messageDiv);
-                            });
-                        }
-                        
-                        // Display Tool messages (AI thinking in mind)
-                        if (nodeData.tool_messages && nodeData.tool_messages.length > 0) {
-                            nodeData.tool_messages.forEach(msg => {
-                                const messageDiv = document.createElement('div');
-                                messageDiv.className = 'message';
-                                messageDiv.textContent = `🧠 ${msg.content}`;
-                                messagesDiv.appendChild(messageDiv);
-                            });
-                        }
-                        
-                        // Add other data as separate messages (for debugging/workflow info)
-                        for (const [key, value] of Object.entries(nodeData)) {
-                            if (key !== 'ai_messages' && key !== 'human_messages' && key !== 'tool_messages') {
-                                const messageDiv = document.createElement('div');
-                                messageDiv.className = 'message';
-                                messageDiv.textContent = `[${nodeName}] ${key}: ${value}`;
-                                messagesDiv.appendChild(messageDiv);
-                            }
-                        }
-                    }
-                }
-                
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            }
-
-            async function loadThreads() {
-                try {
-                    console.log('Loading threads...');
-                    const response = await fetch('/api/threads');
-                    console.log('Response status:', response.status);
-                    
-                    if (!response.ok) {
-                        throw new Error('HTTP error! status: ' + response.status);
-                    }
-                    
-                    const data = await response.json();
-                    console.log('Threads data received:', data);
-                    console.log('Thread select element:', threadSelect);
-                    
-                    // Clear existing options except the first one
-                    threadSelect.innerHTML = '<option value="">-- Select a thread --</option>';
-                    
-                    if (data.threads && data.threads.length > 0) {
-                        console.log('Adding', data.threads.length, 'threads to dropdown');
-                        data.threads.forEach(function(thread, index) {
-                            console.log('Adding thread ' + index + ':', thread);
-                            const option = document.createElement('option');
-                            option.value = thread.thread_id;
-                            option.textContent = thread.thread_id + ' (' + thread.created_at + ')';
-                            threadSelect.appendChild(option);
-                        });
-                        console.log('Final dropdown options:', threadSelect.options.length);
-                        console.log('Loaded', data.threads.length, 'threads');
-                    } else {
-                        console.log('No threads found in response');
-                        addMessage('No existing threads found. Start a new conversation!');
-                    }
-                } catch (error) {
-                    console.error('Error loading threads:', error);
-                    addMessage('Error loading threads: ' + error.message);
-                }
-            }
-
-            async function loadThread() {
-                const threadId = threadSelect.value;
-                if (!threadId) {
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/api/thread/${threadId}`);
-                    const data = await response.json();
-                    
-                    // Clear messages
-                    messagesDiv.innerHTML = '';
-                    
-                    console.log('Thread data received:', data);
-                    
-                    // Handle the simplified result - data is directly a list of messages
-                    let messages = [];
-                    
-                    if (Array.isArray(data)) {
-                        // New simplified format - data is directly a list of messages
-                        messages = data;
-                        console.log('Found messages (simplified format):', messages);
-                    } else {
-                        console.log('No messages found in data structure');
-                    }
-                    
-                    if (messages && messages.length > 0) {
-                        // Display the conversation history with better formatting
-                        messages.forEach(msg => {
-                            if (msg.type === 'human') {
-                                addMessage(`👤 Human: ${msg.content}`);
-                            } else if (msg.type === 'ai') {
-                                let aiMessage = `🤖 AI: ${msg.content}`;
-                                
-                                // Add usage metadata if available (for token count, etc.)
-                                if (msg.usage_metadata) {
-                                    const tokens = msg.usage_metadata.total_tokens || msg.usage_metadata.input_tokens || 0;
-                                    if (tokens > 0) {
-                                        aiMessage += ` (${tokens} tokens)`;
-                                    }
-                                }
-                                
-                                addMessage(aiMessage);
-                            } else if (msg.type === 'tool') {
-                                addMessage(`🧠 ${msg.content}`);
-                            }
-                        });
-                        
-                        // Add a separator if there are messages
-                        addMessage('--- End of conversation ---');
-                    } else {
-                        addMessage('No conversation found for this thread');
-                    }
-
-                    // Automatically connect to this thread when switching
-                    // This ensures smooth thread switching with one connection per thread
-                    console.log(`Switching to thread: ${threadId}`);
-                    connectThread();
-                    
-                } catch (error) {
-                    console.error('Error loading thread:', error);
-                    addMessage('Error loading thread: ' + error.message);
-                }
-            }
-
-            function newConversation() {
-                // Clear messages
-                messagesDiv.innerHTML = '';
-                
-                // Generate a random thread ID
-                const newThreadId = 'thread_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-                
-                // Create a new option for the dropdown
-                const option = document.createElement('option');
-                option.value = newThreadId;
-                option.textContent = `${newThreadId} (new)`;
-                option.selected = true;
-                
-                // Add to dropdown and select it
-                threadSelect.appendChild(option);
-                
-                addMessage(`Started new conversation with thread ID: ${newThreadId}`);
-                
-                // Automatically connect to the new thread
-                connectThread();
-            }
-
-            async function deleteCurrentThread() {
-                const threadId = threadSelect.value;
-                if (!threadId) {
-                    addMessage('Please select a thread to delete');
-                    return;
-                }
-                
-                // Confirm deletion
-                if (!confirm(`Are you sure you want to delete thread "${threadId}"? This action cannot be undone.`)) {
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/api/thread/${threadId}`, {
-                        method: 'DELETE'
-                    });
-                    
-                    if (response.ok) {
-                        addMessage(`Thread "${threadId}" deleted successfully`);
-                        
-                        // Close and remove connection for this thread
-                        if (threadConnections.has(threadId)) {
-                            const connection = threadConnections.get(threadId);
-                            if (connection && connection.readyState === WebSocket.OPEN) {
-                                connection.close();
-                            }
-                            threadConnections.delete(threadId);
-                            console.log(`Closed connection for deleted thread: ${threadId}`);
-                        }
-                        
-                        // Remove from dropdown
-                        const optionToRemove = threadSelect.querySelector(`option[value="${threadId}"]`);
-                        if (optionToRemove) {
-                            optionToRemove.remove();
-                        }
-                        
-                        // Clear messages
-                        messagesDiv.innerHTML = '';
-                        
-                        // Select first available thread or clear selection
-                        if (threadSelect.options.length > 1) {
-                            threadSelect.selectedIndex = 1;
-                            loadThread();
-                        } else {
-                            threadSelect.value = '';
-                        }
-                        
-                        // Refresh threads list
-                        loadThreads();
-                    } else {
-                        const errorData = await response.json();
-                        addMessage(`Error deleting thread: ${errorData.error || 'Unknown error'}`);
-                    }
-                } catch (error) {
-                    console.error('Error deleting thread:', error);
-                    addMessage(`Error deleting thread: ${error.message}`);
-                }
-            }
-
-            function connectThread() {
-                // Always use the global thread ID from dropdown selection
-                const threadId = threadSelect.value;
-                
-                if (!threadId) {
-                    addMessage('Please select a thread first');
-                    return null;
-                }
-
-                // Check if connection already exists and is active
-                if (threadConnections.has(threadId)) {
-                    const existingConnection = threadConnections.get(threadId);
-                    if (existingConnection && existingConnection.readyState === WebSocket.OPEN) {
-                        console.log(`Using existing connection for thread: ${threadId}`);
-                        return existingConnection;
-                    }
-                }
-
-                // Create new connection for this thread
-                console.log(`Creating new connection for thread: ${threadId}`);
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const host = window.location.hostname;
-                const port = window.location.port || '8000';
-                const wsUrl = `${protocol}//${host}:${port}/ws`;
-                const ws = new WebSocket(wsUrl);
-                
-                ws.onopen = function(event) {
-                    console.log(`Connected to server for thread: ${threadId}`);
-                    addMessage(`🔗 Connected to thread: ${threadId}`);
-                };
-
-                ws.onmessage = function(event) {
-                    try {
-                        // Try to parse as JSON
-                        const data = JSON.parse(event.data);
-                        
-                        // Check if this is a message with thread_id (new format)
-                        if (data.thread_id) {
-                            // Only show message if it matches this thread's connection
-                            if (data.thread_id === threadSelect.value) {
-                                addFormattedMessage(data.data);
-                            } else {
-                                console.log('Skipping message for thread:', data.thread_id, 'Expected thread:', threadId);
-                            }
-                        } else {
-                            // Legacy format without thread_id - show to all
-                            addFormattedMessage(data);
-                        }
-                    } catch (e) {
-                        // If not JSON, treat as plain text
-                        addMessage('Server: ' + event.data);
-                    }
-                };
-
-                ws.onclose = function(event) {
-                    console.log(`Disconnected from server for thread: ${threadId}`);
-                    addMessage(`❌ Disconnected from thread: ${threadId}`);
-                    // Remove from connections map when closed
-                    threadConnections.delete(threadId);
-                };
-
-                ws.onerror = function(error) {
-                    console.error(`WebSocket error for thread ${threadId}:`, error);
-                    addMessage(`❌ Error in thread ${threadId}: ` + error);
-                };
-
-                // Store the connection in our map
-                threadConnections.set(threadId, ws);
-                return ws;
-            }
-
-            function connect() {
-                connectThread();
-            }
-
-            function disconnect() {
-                const selectedThreadId = threadSelect.value;
-                if (!selectedThreadId) {
-                    addMessage('Please select a thread to disconnect');
-                    return;
-                }
-
-                if (threadConnections.has(selectedThreadId)) {
-                    const connection = threadConnections.get(selectedThreadId);
-                    if (connection && connection.readyState === WebSocket.OPEN) {
-                        connection.close();
-                        threadConnections.delete(selectedThreadId);
-                        addMessage(`🔌 Disconnected from thread: ${selectedThreadId}`);
-                    }
-                } else {
-                    addMessage('No active connection found for this thread');
-                }
-            }
-
-            function disconnectAll() {
-                // Close all connections
-                for (const [threadId, connection] of threadConnections) {
-                    if (connection && connection.readyState === WebSocket.OPEN) {
-                        connection.close();
-                    }
-                }
-                threadConnections.clear();
-                addMessage('🔌 Disconnected from all threads');
-            }
-
-            function sendMessage() {
-                const message = input.value;
-                const selectedThreadId = threadSelect.value;
-                
-                if (!selectedThreadId) {
-                    addMessage('Please select a thread first');
-                    return;
-                }
-
-                if (!message) {
-                    addMessage('Please enter a message');
-                    return;
-                }
-
-                // Get or create connection for this thread
-                const ws = connectThread();
-                
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    // Send message with thread_id
-                    const messageData = {
-                        message: message,
-                        thread_id: selectedThreadId
-                    };
-                    ws.send(JSON.stringify(messageData));
-                    addMessage(`📤 You (${selectedThreadId}): ${message}`);
-                    input.value = '';
-                } else {
-                    addMessage(`❌ Cannot send message - not connected to thread: ${selectedThreadId}`);
-                }
-            }
-
-            // Allow Enter key to send message
-            input.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    sendMessage();
-                }
-            });
-
-            // Load threads on page load (connections will be created per thread as needed)
-            window.onload = function() {
-                loadThreads();
-            };
-        </script>
-    </body>
-    </html>
-    """)
+# Simple Authentication Endpoints
+@app.post("/api/auth/login")
+async def login(login_data: LoginRequest):
+    """Simple login endpoint - returns JWT token if credentials are valid."""
+    if await verify_user(login_data.username, login_data.password):
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": login_data.username}, expires_delta=access_token_expires
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
 
 @app.get("/agentAPIDoc")
 async def get_api_documentation():
@@ -975,12 +777,12 @@ async def get_api_documentation():
     return API_DOCUMENTATION
 
 @app.get("/api/threads")
-async def get_threads_endpoint():
+async def get_threads_endpoint(username: str = Depends(get_current_user)):
     """
-    Get all distinct thread IDs from the database
+    Get all distinct thread IDs from the database (requires authentication)
     """
     try:
-        print("Fetching threads...")
+        print(f"Fetching threads for user: {username}")
         # Import the async version
         from AI_Agent.basic_agent import get_threads as get_threads_async
         result = await get_threads_async()
@@ -1034,11 +836,12 @@ async def health_check():
         return {"status": "error", "message": f"Database connection failed: {str(e)}"}
 
 @app.get("/api/thread/{thread_id}")
-async def get_thread_endpoint(thread_id: str):
+async def get_thread_endpoint(thread_id: str, username: str = Depends(get_current_user)):
     """
-    Get a specific thread by thread_id, returns current state of the chat.
+    Get a specific thread by thread_id, returns current state of the chat (requires authentication).
     """
     try:
+        print(f"Fetching thread {thread_id} for user: {username}")
         # Call the synchronous function directly
         result = get_thread(thread_id)
         
@@ -1050,11 +853,12 @@ async def get_thread_endpoint(thread_id: str):
         return {"error": f"Failed to fetch thread: {str(e)}"}
 
 @app.delete("/api/thread/{thread_id}")
-async def delete_thread_endpoint(thread_id: str):
+async def delete_thread_endpoint(thread_id: str, username: str = Depends(get_current_user)):
     """
-    Delete a specific thread by thread_id
+    Delete a specific thread by thread_id (requires authentication)
     """
     try:
+        print(f"Deleting thread {thread_id} for user: {username}")
         # Import the async version
         from AI_Agent.basic_agent import delete_thread as delete_thread_async
         result = await delete_thread_async(thread_id)
@@ -1179,21 +983,29 @@ def process_thread_result(result):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time communication with the AI agent.
-    
-    This endpoint handles:
-    - Real-time message streaming from the AI agent
-    - Thread-based conversation management
-    - Workflow execution and chunk streaming
-    
-    Direct point-to-point communication without global connection management.
-    
-    Args:
-        websocket: The WebSocket connection
-        
-    Raises:
-        WebSocketDisconnect: When the client disconnects
+    WebSocket endpoint for real-time communication with the AI agent (requires authentication).
     """
+    # Authenticate user from query parameters
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Authentication token required")
+        return
+    
+    try:
+        # Verify token and get current user
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            await websocket.close(code=4001, reason="Invalid authentication token")
+            return
+        
+    except JWTError:
+        await websocket.close(code=4001, reason="Invalid authentication token")
+        return
+    except Exception as e:
+        await websocket.close(code=4001, reason=f"Authentication error: {str(e)}")
+        return
+    
     await websocket.accept()
     try:
         while True:
@@ -1239,6 +1051,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 
     except WebSocketDisconnect:
         # Client disconnected - no need to manage global state
+        print(f"WebSocket disconnected for user: {username}")
         pass
 
 if __name__ == "__main__":

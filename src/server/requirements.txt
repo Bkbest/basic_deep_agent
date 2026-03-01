@@ -10,4 +10,6 @@ tavily-python
 langchain_mcp_adapters
 langmem
 langgraph-checkpoint-postgres
+python-jose[cryptography]
+passlib[bcrypt]
 
