@@ -212,7 +212,7 @@ if __name__ == "__main__":
     async def main():
         
         # Then invoke the workflow stream
-        async for chunk in invoke_workflow_stream("4", [HumanMessage("plan a day in hyderabad")]):
+        async for chunk in invoke_workflow_stream("4", [HumanMessage("delete sandbox 91b771a615a5400286881ecb244122b2, 1750d7418d704394bbacbfd68eeb39f7,821b7d3b873244998274d2bd22e29e2c")]):
             print(chunk)
         
         # Finally, clean up by deleting the thread

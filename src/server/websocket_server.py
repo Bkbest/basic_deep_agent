@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 from typing import Any
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -19,6 +20,30 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Load environment variables
 load_dotenv()
+
+
+async def ensure_users_table():
+    """Create the users table if it does not already exist.
+    The table stores email (primary key), username, password, and an is_admin flag.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                email VARCHAR(255) PRIMARY KEY,
+                username VARCHAR(255) NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                is_admin BOOLEAN DEFAULT FALSE
+            )
+        ''')
+    finally:
+        await conn.close()
+
+
+
 
 
 from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread
@@ -126,7 +151,6 @@ def extract_meaningful_content(chunk: dict) -> dict:
     
     return result
 
-app = FastAPI(title="AI Agent WebSocket Server")
 API_DOCUMENTATION = {
     "title": "AI Agent WebSocket Server API",
     "version": "1.0.0",
@@ -406,6 +430,33 @@ API_DOCUMENTATION = {
         }
     }
 }
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI startup and shutdown events."""
+    # Startup logic
+    try:
+        print("🚀 Starting up AI Agent WebSocket Server...")
+        print("Ensuring database tables exist...")
+        await ensure_users_table()
+        print("✅ Users table ensured successfully")
+        # If other tables need creation, they can be added here.
+        print("✅ Database initialization completed")
+        print("✅ Server startup completed successfully")
+        yield
+    except Exception as e:
+        print(f"❌ Error during startup: {e}")
+        print("💥 Server startup aborted due to database initialization failure")
+        # Exit the process if database setup fails
+        import sys
+        sys.exit(1)
+    finally:
+        # Shutdown logic
+        print("🛑 Shutting down AI Agent WebSocket Server...")
+
+app = FastAPI(title="AI Agent WebSocket Server", lifespan=lifespan)
+
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
@@ -414,8 +465,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
 
 @app.get("/")
 async def get_index():
@@ -944,7 +993,7 @@ async def get_threads_endpoint():
 @app.get("/api/health")
 async def health_check():
     """
-    Simple health check endpoint
+    Comprehensive health check endpoint including database and table verification
     """
     try:
         connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
@@ -953,10 +1002,34 @@ async def health_check():
         
         # Test database connection
         conn = await asyncpg.connect(connection_string)
+        
+        # Test basic connectivity
         await conn.execute('SELECT 1')
+        
+        # Verify users table exists
+        table_check = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'users'
+            )
+        """)
+        
         await conn.close()
         
-        return {"status": "ok", "message": "Database connection successful"}
+        if table_check:
+            return {
+                "status": "ok", 
+                "message": "Database connection successful",
+                "database": "connected",
+                "tables": {"users": "exists"}
+            }
+        else:
+            return {
+                "status": "warning", 
+                "message": "Database connected but users table missing",
+                "database": "connected",
+                "tables": {"users": "missing"}
+            }
     except Exception as e:
         return {"status": "error", "message": f"Database connection failed: {str(e)}"}
 
