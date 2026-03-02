@@ -268,7 +268,7 @@ def extract_meaningful_content(chunk: dict) -> dict:
                         'id': msg_id
                     }
                     human_messages.append(message_content)
-                elif msg_type == 'ai' and content and content.strip():
+                elif msg_type == 'ai' and content:
                     message_content = {
                         'content': content,
                         'type': msg_type,
@@ -280,7 +280,7 @@ def extract_meaningful_content(chunk: dict) -> dict:
                         message_content['usage_metadata'] = usage_metadata
                     
                     ai_messages.append(message_content)
-                elif msg_type == 'tool' and content and content.strip():
+                elif msg_type == 'tool' and content:
                     # Check if this is a write_todos tool message
                     tool_name = None
                     if hasattr(msg, 'name'):
@@ -937,7 +937,7 @@ def process_thread_result(result):
                     }
                     filtered_messages.append(clean_msg)
                     print(f"Added human message: {clean_msg}")
-                elif msg_type == 'ai' and content and content.strip():
+                elif msg_type == 'ai' and content:
                     clean_msg = {
                         'content': content,
                         'type': msg_type,
@@ -950,7 +950,7 @@ def process_thread_result(result):
                     
                     filtered_messages.append(clean_msg)
                     print(f"Added AI message (non-empty content): {clean_msg}")
-                elif msg_type == 'tool' and content and content.strip():
+                elif msg_type == 'tool' and content:
                     # Check if this is a write_todos tool message
                     tool_name = None
                     if hasattr(msg, 'name'):
@@ -968,7 +968,7 @@ def process_thread_result(result):
                         print(f"Added write_todos tool message: {clean_msg}")
                     else:
                         print(f"Skipping tool message from {tool_name}: {msg_id}")
-                elif msg_type in ['ai', 'tool'] and (not content or not content.strip()):
+                elif msg_type in ['ai', 'tool'] and (not content):
                     print(f"Skipping {msg_type} message with empty content: {msg_id}")
             
             print(f"Returning {len(filtered_messages)} filtered messages")
