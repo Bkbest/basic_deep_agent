@@ -257,7 +257,7 @@ def summarize_webpage_content(webpage_content: str) -> Summary:
         Summary object with filename and summary
     """
     try:
-        llm_factory = MyLLM(temperature=0.7,tools=[])
+        llm_factory = MyLLM(temperature=0.7,tools=[],model="gpt-oss:120b-cloud")
         llm_web_search = llm_factory.llm_without_tools()
         llm_for_web_search = llm_web_search.with_structured_output(Summary)
         # Generate summary
