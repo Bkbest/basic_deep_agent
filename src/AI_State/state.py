@@ -9,8 +9,9 @@ are handled through the appropriate reducer functions.
 
 from typing_extensions import Annotated
 from AI_Reducers.reducers import file_reducer
-from langchain.agents import AgentState
+from langchain.agents.middleware.types import AgentState
 from typing import TypedDict, Literal
+from langmem.short_term import RunningSummary
 
 
 class Todo(TypedDict):
@@ -31,3 +32,4 @@ class State(AgentState):
     # messages: Annotated[list, message_reducer]
     todos: list[Todo]
     files: Annotated[dict[str, str], file_reducer]
+    summary: RunningSummary | None

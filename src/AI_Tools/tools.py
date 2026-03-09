@@ -4,7 +4,7 @@ from langgraph.types import Command
 from langchain_core.messages import ToolMessage, HumanMessage
 from typing_extensions import Annotated, Literal
 from AI_State.state import State
-from langgraph.prebuilt import InjectedState
+from langgraph.prebuilt.tool_node import InjectedState
 from AI_Sys_Prompt.system_prompt_agent import (
     WRITE_TODOS_DESCRIPTION,
     LS_DESCRIPTION,
@@ -166,13 +166,25 @@ def get_today_str() -> str:
     
 @tool(description=INTERNET_SEARCH_DESCRIPTION)
 def internet_search(
-    query: str,
-    state: Annotated[State, InjectedState],
+    state: Annotated[dict, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
-    max_results: int = 5,
-    topic: Literal["general", "news", "finance"] = "general",
+    query: str,
+    max_results:int,
+    topic: Literal["general", "news", "finance"]
+    
 ):
+    """Search web and save detailed results to files while returning minimal context.
+
+    Performs web search and saves full content to files for context offloading.
+    Returns only essential information to help the agent decide on next steps.
+
+    Args:
+        query: Search query string
+        max_results: Maximum number of results (default: 5, limit to save credits)
+        topic: Type of search - "general", "news", or "finance"
+    """
     try:
+        print("hello")
         tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
         
         search_results = tavily_client.search(

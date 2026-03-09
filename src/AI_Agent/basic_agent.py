@@ -4,7 +4,9 @@ import sys
 from langgraph.graph import START, StateGraph
 from AI_Nodes.nodes import is_tool_required, llm_with_tools
 from AI_State.state import State
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt.tool_node import (
+    ToolNode
+)
 from AI_Tools.tools import MyTools
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -42,7 +44,6 @@ async def invoke_workflow_stream(thread_id, message):
     # Create the workflow graph
     workflow = StateGraph(state_schema=State)
     all_tools = await MyTools().getAllTools()
-
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools)
     workflow.add_node("tool_node", ToolNode(all_tools))
