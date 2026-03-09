@@ -173,16 +173,6 @@ def internet_search(
     topic: Literal["general", "news", "finance"]
     
 ):
-    """Search web and save detailed results to files while returning minimal context.
-
-    Performs web search and saves full content to files for context offloading.
-    Returns only essential information to help the agent decide on next steps.
-
-    Args:
-        query: Search query string
-        max_results: Maximum number of results (default: 5, limit to save credits)
-        topic: Type of search - "general", "news", or "finance"
-    """
     try:
         print("hello")
         tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
