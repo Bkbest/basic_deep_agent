@@ -328,6 +328,7 @@ API_DOCUMENTATION = {
         "endpoints_requiring_auth": [
             "GET /api/threads",
             "GET /api/thread/{thread_id}",
+            "GET /api/thread/{thread_id}/message_count",
             "DELETE /api/thread/{thread_id}",
             "WebSocket /ws"
         ],
@@ -370,6 +371,7 @@ API_DOCUMENTATION = {
                         "POST /api/auth/login": "Login and get JWT token",
                         "GET /api/threads": "Get all thread IDs (requires auth)",
                         "GET /api/thread/{thread_id}": "Get specific thread (requires auth)",
+                        "GET /api/thread/{thread_id}/message_count": "Get message count for specific thread (requires auth)",
                         "DELETE /api/thread/{thread_id}": "Delete specific thread (requires auth)",
                         "WebSocket /ws": "WebSocket endpoint (requires auth)"
                     }
@@ -593,6 +595,48 @@ API_DOCUMENTATION = {
                 "response": {
                     "success": True,
                     "message": "Thread thread_abc123_1640995200000 deleted successfully"
+                }
+            }
+        },
+        "GET /api/thread/{thread_id}/message_count": {
+            "description": "Get the count of messages in a specific thread by thread_id",
+            "parameters": {
+                "thread_id": {
+                    "type": "string",
+                    "description": "Unique identifier for the thread",
+                    "required": True
+                }
+            },
+            "headers": {
+                "Authorization": {
+                    "type": "string",
+                    "description": "JWT Bearer token in format 'Bearer <token>'",
+                    "required": True,
+                    "example": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                }
+            },
+            "response": {
+                "type": "JSON",
+                "description": "Message count for the thread",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "thread_id": {"type": "string"},
+                        "message_count": {"type": "integer"}
+                    }
+                }
+            },
+            "example": {
+                "request": {
+                    "method": "GET",
+                    "url": "http://localhost:8000/api/thread/thread_abc123_1640995200000/message_count",
+                    "headers": {
+                        "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huX2RvZSIsImV4cCI6MTY5OTk5OTk5OX0.example_signature"
+                    }
+                },
+                "response": {
+                    "thread_id": "thread_abc123_1640995200000",
+                    "message_count": 5
                 }
             }
         },
@@ -867,6 +911,23 @@ async def delete_thread_endpoint(thread_id: str, username: str = Depends(get_cur
         print(f"Error in delete_thread_endpoint: {e}")
         return {"error": f"Failed to delete thread: {str(e)}"}
 
+@app.get("/api/thread/{thread_id}/message_count")
+async def get_thread_message_count_endpoint(thread_id: str, username: str = Depends(get_current_user)):
+    """
+    Get the count of messages in a specific thread by thread_id (requires authentication)
+    """
+    try:
+        print(f"Getting message count for thread {thread_id} for user: {username}")
+        # Call the synchronous function directly
+        result = get_thread(thread_id)
+        
+        # Get the message count using the new function
+        message_count = get_thread_message_count(result)
+        return {"thread_id": thread_id, "message_count": message_count}
+    except Exception as e:
+        print(f"Error in get_thread_message_count_endpoint: {e}")
+        return {"error": f"Failed to get message count: {str(e)}"}
+
 def process_thread_result(result):
     """
     Process thread result to extract only human and AI messages.
@@ -979,6 +1040,45 @@ def process_thread_result(result):
         print(f"Result is not a list/tuple or doesn't have enough elements. Type: {type(result)}, Length: {len(result) if hasattr(result, '__len__') else 'N/A'}")
     
     return []
+
+def get_thread_message_count(result):
+    """
+    Get the count of messages in a thread result.
+    
+    This function processes the raw result from the agent workflow and counts
+    only meaningful messages (human, AI, and write_todos tool messages) while
+    filtering out empty content and other tool messages.
+    
+    Args:
+        result: The raw result from the agent workflow (can be CheckpointTuple, list, or dict)
+        
+    Returns:
+        int: Count of filtered messages
+    """
+    print(f"Counting messages in result type: {type(result)}")
+    
+    # Handle CheckpointTuple - convert to tuple and access like sample JSON
+    if hasattr(result, '__iter__') and not isinstance(result, (str, dict, list)):
+        try:
+            result = tuple(result)
+            print(f"Converted to tuple: {result}")
+        except:
+            pass
+    
+    # Handle list/tuple format like sample JSON: [config, checkpoint, ...]
+    if isinstance(result, (list, tuple)) and len(result) >= 2:
+        checkpoint = result[1]  # Second element contains the checkpoint data
+        
+        if isinstance(checkpoint, dict) and 'channel_values' in checkpoint:
+            messages = checkpoint['channel_values'].get('messages', [])
+            print(f"Found {len(messages)} total messages")
+            return len(messages)
+        else:
+            print("No channel_values found in checkpoint")
+    else:
+        print(f"Result is not a list/tuple or doesn't have enough elements. Type: {type(result)}, Length: {len(result) if hasattr(result, '__len__') else 'N/A'}")
+    
+    return 0
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
