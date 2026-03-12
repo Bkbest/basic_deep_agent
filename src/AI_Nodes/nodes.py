@@ -51,7 +51,7 @@ def llm_with_tools(state: State):
     chain = prompt_template.invoke(state)
     response = llm_tools.invoke(chain)
     state_update = {"messages": [response]}
-    if messags_after_summarization.running_summary:
+    if summarization_result.running_summary:
         state_update["summary"] = summarization_result.running_summary
     
     # Return the response as a message
