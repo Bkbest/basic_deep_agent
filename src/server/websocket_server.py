@@ -220,93 +220,98 @@ def extract_meaningful_content(chunk: dict) -> dict:
     Returns:
         dict: Cleaned dictionary with organized messages by type (ai_messages, human_messages, tool_messages)
     """
-    result = {}
-    
-    for node_name, node_data in chunk.items():
-        if not isinstance(node_data, dict):
-            result[node_name] = node_data
-            continue
-            
-        node_result = {}
+    try:
+        result = {}
         
-        # Handle messages with separate keys for AI, Human, and Tool
-        if 'messages' in node_data:
-            ai_messages = []
-            human_messages = []
-            tool_messages = []
+        for node_name, node_data in chunk.items():
+            if not isinstance(node_data, dict):
+                result[node_name] = node_data
+                continue
+                
+            node_result = {}
             
-            for msg in node_data['messages']:
-                # Handle LangChain message objects (HumanMessage, AIMessage, ToolMessage)
-                msg_type = None
-                content = ''
-                msg_id = None
-                usage_metadata = None
-                tool_calls = []
+            # Handle messages with separate keys for AI, Human, and Tool
+            if 'messages' in node_data:
+                ai_messages = []
+                human_messages = []
+                tool_messages = []
                 
-                if hasattr(msg, 'type'):
-                    # LangChain message object
-                    msg_type = msg.type
-                    content = getattr(msg, 'content', '')
-                    msg_id = getattr(msg, 'id', None)
-                    if hasattr(msg, 'usage_metadata'):
-                        usage_metadata = msg.usage_metadata
-                    if hasattr(msg, 'tool_calls'):
-                        tool_calls = msg.tool_calls
-                elif isinstance(msg, dict):
-                    # Dictionary format (from sample JSON)
-                    msg_type = msg.get('type')
-                    content = msg.get('content', '')
-                    msg_id = msg.get('id', None)
-                    usage_metadata = msg.get('usage_metadata')
-                    tool_calls = msg.get('tool_calls', [])
-                
-                # Include human messages, AI messages with non-empty content, and tool messages with non-empty content (same logic as process_thread_result)
-                if msg_type == 'human':
-                    message_content = {
-                        'content': content,
-                        'type': msg_type,
-                        'id': msg_id
-                    }
-                    human_messages.append(message_content)
-                elif msg_type == 'ai' and content:
-                    message_content = {
-                        'content': content,
-                        'type': msg_type,
-                        'id': msg_id
-                    }
+                for msg in node_data['messages']:
+                    # Handle LangChain message objects (HumanMessage, AIMessage, ToolMessage)
+                    msg_type = None
+                    content = ''
+                    msg_id = None
+                    usage_metadata = None
+                    tool_calls = []
                     
-                    # Add usage metadata if present (for AI messages)
-                    if usage_metadata:
-                        message_content['usage_metadata'] = usage_metadata
-                    
-                    ai_messages.append(message_content)
-                elif msg_type == 'tool' and content:
-                    # Check if this is a write_todos tool message
-                    tool_name = None
-                    if hasattr(msg, 'name'):
-                        tool_name = getattr(msg, 'name', None)
+                    if hasattr(msg, 'type'):
+                        # LangChain message object
+                        msg_type = msg.type
+                        content = getattr(msg, 'content', '')
+                        msg_id = getattr(msg, 'id', None)
+                        if hasattr(msg, 'usage_metadata'):
+                            usage_metadata = msg.usage_metadata
+                        if hasattr(msg, 'tool_calls'):
+                            tool_calls = msg.tool_calls
                     elif isinstance(msg, dict):
-                        tool_name = msg.get('name')
+                        # Dictionary format (from sample JSON)
+                        msg_type = msg.get('type')
+                        content = msg.get('content', '')
+                        msg_id = msg.get('id', None)
+                        usage_metadata = msg.get('usage_metadata')
+                        tool_calls = msg.get('tool_calls', [])
                     
-                    if tool_name == 'write_todos':
+                    # Include human messages, AI messages with non-empty content, and tool messages with non-empty content (same logic as process_thread_result)
+                    if msg_type == 'human':
                         message_content = {
                             'content': content,
                             'type': msg_type,
                             'id': msg_id
                         }
-                        tool_messages.append(message_content)
-                # Skip messages with empty content (same as process_thread_result)
+                        human_messages.append(message_content)
+                    elif msg_type == 'ai' and content:
+                        message_content = {
+                            'content': content,
+                            'type': msg_type,
+                            'id': msg_id
+                        }
+                        
+                        # Add usage metadata if present (for AI messages)
+                        if usage_metadata:
+                            message_content['usage_metadata'] = usage_metadata
+                        
+                        ai_messages.append(message_content)
+                    elif msg_type == 'tool' and content:
+                        # Check if this is a write_todos tool message
+                        tool_name = None
+                        if hasattr(msg, 'name'):
+                            tool_name = getattr(msg, 'name', None)
+                        elif isinstance(msg, dict):
+                            tool_name = msg.get('name')
+                        
+                        if tool_name == 'write_todos':
+                            message_content = {
+                                'content': content,
+                                'type': msg_type,
+                                'id': msg_id
+                            }
+                            tool_messages.append(message_content)
+                    # Skip messages with empty content (same as process_thread_result)
+                
+                if ai_messages:
+                    node_result['ai_messages'] = ai_messages
+                if human_messages:
+                    node_result['human_messages'] = human_messages
+                if tool_messages:
+                    node_result['tool_messages'] = tool_messages
             
-            if ai_messages:
-                node_result['ai_messages'] = ai_messages
-            if human_messages:
-                node_result['human_messages'] = human_messages
-            if tool_messages:
-                node_result['tool_messages'] = tool_messages
+            result[node_name] = node_result
         
-        result[node_name] = node_result
-    
-    return result
+        return result
+    except Exception:
+        import traceback
+        print(f"Error in extract_meaningful_content: {traceback.format_exc()}")
+        raise
 
 API_DOCUMENTATION = {
     "title": "AI Agent WebSocket Server API",
@@ -942,98 +947,103 @@ def process_thread_result(result):
     Returns:
         list: Filtered list of message dictionaries with type, content, and metadata
     """
-    print(f"Processing result type: {type(result)}")
-    # Handle CheckpointTuple - convert to tuple and access like sample JSON
-    if hasattr(result, '__iter__') and not isinstance(result, (str, dict, list)):
-        try:
-            result = tuple(result)
-        except:
-            pass
-    
-    # Handle list/tuple format like sample JSON: [config, checkpoint, ...]
-    if isinstance(result, (list, tuple)) and len(result) >= 2:
-        checkpoint = result[1]  # Second element contains the checkpoint data
+    try:
+        print(f"Processing result type: {type(result)}")
+        # Handle CheckpointTuple - convert to tuple and access like sample JSON
+        if hasattr(result, '__iter__') and not isinstance(result, (str, dict, list)):
+            try:
+                result = tuple(result)
+            except:
+                pass
         
-        if isinstance(checkpoint, dict) and 'channel_values' in checkpoint:
-            messages = checkpoint['channel_values'].get('messages', [])
-            print(f"Found {len(messages)} messages")
+        # Handle list/tuple format like sample JSON: [config, checkpoint, ...]
+        if isinstance(result, (list, tuple)) and len(result) >= 2:
+            checkpoint = result[1]  # Second element contains the checkpoint data
             
-            # Filter to only include human and AI messages (AI messages without tool calls)
-            filtered_messages = []
-            for msg in messages:
-                # Handle LangChain message objects (HumanMessage, AIMessage, ToolMessage)
-                msg_type = None
-                content = ''
-                msg_id = None
-                usage_metadata = None
-                tool_calls = []
+            if isinstance(checkpoint, dict) and 'channel_values' in checkpoint:
+                messages = checkpoint['channel_values'].get('messages', [])
+                print(f"Found {len(messages)} messages")
                 
-                if hasattr(msg, 'type'):
-                    # LangChain message object
-                    msg_type = msg.type
-                    content = getattr(msg, 'content', '')
-                    msg_id = getattr(msg, 'id', None)
-                    if hasattr(msg, 'usage_metadata'):
-                        usage_metadata = msg.usage_metadata
-                    if hasattr(msg, 'tool_calls'):
-                        tool_calls = msg.tool_calls
-                elif isinstance(msg, dict):
-                    # Dictionary format (from sample JSON)
-                    msg_type = msg.get('type')
-                    content = msg.get('content', '')
-                    msg_id = msg.get('id', None)
-                    usage_metadata = msg.get('usage_metadata')
-                    tool_calls = msg.get('tool_calls', [])
-                
-                # Include human messages, AI messages with non-empty content, and write_todos tool messages with non-empty content
-                if msg_type == 'human':
-                    clean_msg = {
-                        'content': content,
-                        'type': msg_type,
-                        'id': msg_id
-                    }
-                    filtered_messages.append(clean_msg)
-                elif msg_type == 'ai' and content:
-                    clean_msg = {
-                        'content': content,
-                        'type': msg_type,
-                        'id': msg_id
-                    }
+                # Filter to only include human and AI messages (AI messages without tool calls)
+                filtered_messages = []
+                for msg in messages:
+                    # Handle LangChain message objects (HumanMessage, AIMessage, ToolMessage)
+                    msg_type = None
+                    content = ''
+                    msg_id = None
+                    usage_metadata = None
+                    tool_calls = []
                     
-                    # Add usage metadata if present (for AI messages)
-                    if usage_metadata:
-                        clean_msg['usage_metadata'] = usage_metadata
-                    
-                    filtered_messages.append(clean_msg)
-                elif msg_type == 'tool' and content:
-                    # Check if this is a write_todos tool message
-                    tool_name = None
-                    if hasattr(msg, 'name'):
-                        tool_name = getattr(msg, 'name', None)
+                    if hasattr(msg, 'type'):
+                        # LangChain message object
+                        msg_type = msg.type
+                        content = getattr(msg, 'content', '')
+                        msg_id = getattr(msg, 'id', None)
+                        if hasattr(msg, 'usage_metadata'):
+                            usage_metadata = msg.usage_metadata
+                        if hasattr(msg, 'tool_calls'):
+                            tool_calls = msg.tool_calls
                     elif isinstance(msg, dict):
-                        tool_name = msg.get('name')
+                        # Dictionary format (from sample JSON)
+                        msg_type = msg.get('type')
+                        content = msg.get('content', '')
+                        msg_id = msg.get('id', None)
+                        usage_metadata = msg.get('usage_metadata')
+                        tool_calls = msg.get('tool_calls', [])
                     
-                    if tool_name == 'write_todos':
+                    # Include human messages, AI messages with non-empty content, and write_todos tool messages with non-empty content
+                    if msg_type == 'human':
                         clean_msg = {
                             'content': content,
                             'type': msg_type,
                             'id': msg_id
                         }
                         filtered_messages.append(clean_msg)
-                        print(f"Added write_todos tool message: {clean_msg}")
-                    else:
-                        print(f"Skipping tool message from {tool_name}: {msg_id}")
-                elif msg_type in ['ai', 'tool'] and (not content):
-                    print(f"Skipping {msg_type} message with empty content: {msg_id}")
-            
-            print(f"Returning {len(filtered_messages)} filtered messages")
-            return filtered_messages
+                    elif msg_type == 'ai' and content:
+                        clean_msg = {
+                            'content': content,
+                            'type': msg_type,
+                            'id': msg_id
+                        }
+                        
+                        # Add usage metadata if present (for AI messages)
+                        if usage_metadata:
+                            clean_msg['usage_metadata'] = usage_metadata
+                        
+                        filtered_messages.append(clean_msg)
+                    elif msg_type == 'tool' and content:
+                        # Check if this is a write_todos tool message
+                        tool_name = None
+                        if hasattr(msg, 'name'):
+                            tool_name = getattr(msg, 'name', None)
+                        elif isinstance(msg, dict):
+                            tool_name = msg.get('name')
+                        
+                        if tool_name == 'write_todos':
+                            clean_msg = {
+                                'content': content,
+                                'type': msg_type,
+                                'id': msg_id
+                            }
+                            filtered_messages.append(clean_msg)
+                            print(f"Added write_todos tool message: {clean_msg}")
+                        else:
+                            print(f"Skipping tool message from {tool_name}: {msg_id}")
+                    elif msg_type in ['ai', 'tool'] and (not content):
+                        print(f"Skipping {msg_type} message with empty content: {msg_id}")
+                
+                print(f"Returning {len(filtered_messages)} filtered messages")
+                return filtered_messages
+            else:
+                print("No channel_values found in checkpoint")
         else:
-            print("No channel_values found in checkpoint")
-    else:
-        print(f"Result is not a list/tuple or doesn't have enough elements. Type: {type(result)}, Length: {len(result) if hasattr(result, '__len__') else 'N/A'}")
-    
-    return []
+            print(f"Result is not a list/tuple or doesn't have enough elements. Type: {type(result)}, Length: {len(result) if hasattr(result, '__len__') else 'N/A'}")
+        
+        return []
+    except Exception:
+        import traceback
+        print(f"Error in process_thread_result: {traceback.format_exc()}")
+        raise
 
 def get_thread_message_count(result):
     """
