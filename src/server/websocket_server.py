@@ -1151,7 +1151,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_text(load.dumps(message_with_thread))
                     
             except Exception as e:
-                await websocket.send_text(f"Error running workflow: {str(e)}")
+                import traceback
+                print(f"Error in extract_meaningful_content: {traceback.format_exc()}")
+                await websocket.send_text("Error running workflow")
                 
     except WebSocketDisconnect:
         # Client disconnected - no need to manage global state
