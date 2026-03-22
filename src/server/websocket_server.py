@@ -1152,8 +1152,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     
             except Exception as e:
                 import traceback
-                print(f"Error in extract_meaningful_content: {traceback.format_exc()}")
-                await websocket.send_text("Error running workflow")
+                await websocket.send_text(f"Error running workflow: {traceback.format_exc()}")
                 
     except WebSocketDisconnect:
         # Client disconnected - no need to manage global state
