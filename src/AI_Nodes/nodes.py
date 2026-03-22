@@ -14,7 +14,7 @@ llm_factory = MyLLM(temperature=0.7,tools=tools)
 llm = llm_factory.llm_without_tools()
 llm_tools = llm_factory.llm_with_tools()
 
-def is_tool_required(state: State):
+async def is_tool_required(state: State):
     messages = state["messages"]
     lastMessage = messages[-1]  
     
@@ -25,7 +25,7 @@ def is_tool_required(state: State):
         return END
 
 
-def llm_with_tools(state: State, runtime: Runtime):
+async def llm_with_tools(state: State, runtime: Runtime):
     """
     Processes messages using LLM with tools when required.
     

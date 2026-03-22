@@ -214,7 +214,7 @@ if __name__ == "__main__":
     async def main():
         
         # Then invoke the workflow stream
-        async for chunk in invoke_workflow_stream("12", [HumanMessage("research about the CEO of crunchyroll and tell me what kind of a person they are")]):
+        async for chunk in invoke_workflow_stream("13", [HumanMessage("research about what investments top 10 fortune 500 companies are doing on AI in 2026 if any, and also find out what is the plan for 2026 for major AI providers like Google deepmind, anthropic etc.")]):
             print(chunk)
         
         # Finally, clean up by deleting the thread
