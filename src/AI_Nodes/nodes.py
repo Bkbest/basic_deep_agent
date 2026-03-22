@@ -7,6 +7,7 @@ from langgraph.graph import END
 from langmem.short_term import summarize_messages
 from langgraph.runtime import Runtime
 import time
+import asyncio
 
 
 tools=MyTools().getToolsSync()
@@ -37,8 +38,8 @@ async def llm_with_tools(state: State, runtime: Runtime):
     """
     info = runtime.execution_info
     if info.node_attempt > 1:
-        print("sleeping for 3 seconds before retrying.")
-        time.sleep(3)
+        print("sleeping for 30 seconds before retrying.")
+        await asyncio.sleep(30)     
     # Create the prompt template with system prompt and messages
     
     summarization_result = summarize_messages(
