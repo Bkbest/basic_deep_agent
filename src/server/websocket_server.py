@@ -14,6 +14,7 @@ import uvicorn
 from dotenv import load_dotenv
 import asyncpg
 import os
+from langchain_core import load
 
 # Set Windows-compatible event loop policy for psycopg
 if sys.platform == "win32":
@@ -1147,7 +1148,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         'thread_id': thread_id,
                         'data': clean_chunk
                     }
-                    await websocket.send_text(json.dumps(message_with_thread))
+                    await websocket.send_text(load.dumps(message_with_thread))
                     
             except Exception as e:
                 await websocket.send_text(f"Error running workflow: {str(e)}")
