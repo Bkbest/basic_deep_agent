@@ -39,9 +39,9 @@ def llm_with_tools(state: State):
         state["messages"],
         running_summary=state.get("summary"),
         model=llm,
-        max_tokens=10000,
-        max_tokens_before_summary=10000,
-        max_summary_tokens=5000
+        max_tokens=6000,
+        max_tokens_before_summary=6000,
+        max_summary_tokens=3000
     )
     messags_after_summarization = summarization_result.messages
     prompt_template = ChatPromptTemplate.from_messages  ([
