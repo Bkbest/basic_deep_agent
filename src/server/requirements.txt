@@ -5,7 +5,7 @@ python-multipart
 asyncpg
 langchain
 langchain-ollama
-langgraph
+langgraph>=1.1.3
 tavily-python
 langchain_mcp_adapters
 langmem
