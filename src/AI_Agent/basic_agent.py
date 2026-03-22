@@ -15,6 +15,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 import os
 from dotenv import load_dotenv
 import asyncpg
+from langgraph.types import RetryPolicy
 
 load_dotenv()
 
@@ -45,7 +46,7 @@ async def invoke_workflow_stream(thread_id, message):
     workflow = StateGraph(state_schema=State)
     all_tools = await MyTools().getAllTools()
     # Add nodes
-    workflow.add_node("llm_with_tools", llm_with_tools)
+    workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("tool_node", ToolNode(all_tools))
 
     # Add edges
