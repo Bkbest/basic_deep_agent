@@ -943,20 +943,16 @@ def process_thread_result(result):
         list: Filtered list of message dictionaries with type, content, and metadata
     """
     print(f"Processing result type: {type(result)}")
-    print(f"Result: {result}")
-    
     # Handle CheckpointTuple - convert to tuple and access like sample JSON
     if hasattr(result, '__iter__') and not isinstance(result, (str, dict, list)):
         try:
             result = tuple(result)
-            print(f"Converted to tuple: {result}")
         except:
             pass
     
     # Handle list/tuple format like sample JSON: [config, checkpoint, ...]
     if isinstance(result, (list, tuple)) and len(result) >= 2:
         checkpoint = result[1]  # Second element contains the checkpoint data
-        print(f"Checkpoint: {checkpoint}")
         
         if isinstance(checkpoint, dict) and 'channel_values' in checkpoint:
             messages = checkpoint['channel_values'].get('messages', [])
@@ -997,7 +993,6 @@ def process_thread_result(result):
                         'id': msg_id
                     }
                     filtered_messages.append(clean_msg)
-                    print(f"Added human message: {clean_msg}")
                 elif msg_type == 'ai' and content:
                     clean_msg = {
                         'content': content,
@@ -1010,7 +1005,6 @@ def process_thread_result(result):
                         clean_msg['usage_metadata'] = usage_metadata
                     
                     filtered_messages.append(clean_msg)
-                    print(f"Added AI message (non-empty content): {clean_msg}")
                 elif msg_type == 'tool' and content:
                     # Check if this is a write_todos tool message
                     tool_name = None
@@ -1061,7 +1055,6 @@ def get_thread_message_count(result):
     if hasattr(result, '__iter__') and not isinstance(result, (str, dict, list)):
         try:
             result = tuple(result)
-            print(f"Converted to tuple: {result}")
         except:
             pass
     

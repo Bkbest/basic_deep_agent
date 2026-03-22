@@ -174,7 +174,6 @@ def internet_search(
     
 ):
     try:
-        print("hello")
         tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
         
         search_results = tavily_client.search(
