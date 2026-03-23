@@ -316,11 +316,21 @@ class MyTools:
                 "pandora_sandbox": {
                     "transport": "streamable_http",
                     "url": os.getenv("SANDBOX_URL"),
+                },
+                "virtual-fs": {
+                "transport": "stdio",
+                "command": "npx",
+                "args": ["-y", "mcp-virtual-fs"],
+                "env": {
+                    "DATABASE_URL": os.getenv("POSTGRES_CONNECTION_STRING"),
+                    "VFS_AUTO_INIT": "true"
+                    
+                    }
                 }
             }
         )
-        sandbox_tools = await client.get_tools()
-        return [write_todos, read_todos, ls, read_file, internet_search,think_tool,get_current_date] + sandbox_tools
+        mcp_tools = await client.get_tools()
+        return [write_todos, read_todos, ls, read_file, internet_search,think_tool,get_current_date] + mcp_tools
     
     def getToolsSync(self):
         """Synchronous wrapper for getAllTools"""
