@@ -2,7 +2,7 @@ from langchain_core.tools import tool, InjectedToolCallId
 from AI_State.state import Todo
 from langgraph.types import Command
 from langchain_core.messages import ToolMessage, HumanMessage
-from typing_extensions import Annotated, Literal
+from typing_extensions import Annotated, Literal,Union
 from AI_State.state import State
 from langgraph.prebuilt.tool_node import InjectedState
 from AI_Sys_Prompt.system_prompt_agent import (
@@ -11,7 +11,7 @@ from AI_Sys_Prompt.system_prompt_agent import (
     READ_FILE_DESCRIPTION,
     WRITE_FILE_DESCRIPTION,
     INTERNET_SEARCH_DESCRIPTION,
-    SUMMARIZE_WEB_SEARCH
+    EDIT_DESCRIPTION
 )
 from tavily import TavilyClient
 import uuid, base64
@@ -19,6 +19,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from AI_STRUCT_OUT.summary import Summary
+import asyncpg
 from AI_LLM.agent_llm import MyLLM
 import traceback
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -80,6 +81,106 @@ def read_todos(
         result += f"{i}. {emoji} {todo['content']} ({todo['status']})\n"
 
     return result.strip()
+
+@tool(description="List all skills stored in the database, returns list of {skill_name, skill_description}.", parse_docstring=True)
+async def list_skills() -> list[dict]:
+    """List all skills from the 'skills' database table.
+
+    Returns:
+        List of dictionaries containing 'skill_name' and 'skill_description'.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING not set")
+
+    try:
+        conn = await asyncpg.connect(connection_string)
+        try:
+            rows = await conn.fetch("SELECT skill_name, skill_description FROM skills")
+            if not rows:
+                return []
+            return [
+                {"skill_name": row["skill_name"], "skill_description": row["skill_description"]}
+                for row in rows
+            ]
+        finally:
+            await conn.close()
+    except Exception as e:
+        raise RuntimeError(f"Failed to list skills: {e}")
+
+@tool(description="Read the skill text for a given skill_name from the skills table.", parse_docstring=True)
+async def read_skill(skill_name: str) -> str:
+    """Read a single skill from the 'skills' database table.
+
+    Args:
+        skill_name: The key name of the skill to read.
+
+    Returns:
+        The 'skill' text or an error message if not found.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING not set")
+
+    try:
+        conn = await asyncpg.connect(connection_string)
+        try:
+            row = await conn.fetchrow(
+                "SELECT skill FROM skills WHERE skill_name = $1",
+                skill_name,
+            )
+            if not row:
+                return f"Skill '{skill_name}' not found"
+            return row["skill"]
+        finally:
+            await conn.close()
+    except Exception as e:
+        raise RuntimeError(f"Failed to read skill '{skill_name}': {e}")
+
+@tool(description="Update an existing skill's skill and/or skill_description in the skills table.", parse_docstring=True)
+async def update_skill(
+    skill_name: str,
+    skill: str,
+    skill_description: str,
+) -> str:
+    """Update an existing skill in the 'skills' database table.
+
+    Args:
+        skill_name: The unique key name of the skill to update.
+        skill: The new skill text content.
+        skill_description: The new skill description.
+
+    Returns:
+        A confirmation message on success, or an error if the skill does not exist.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING not set")
+
+    try:
+        conn = await asyncpg.connect(connection_string)
+        try:
+            row = await conn.fetchrow(
+                "SELECT skill_name FROM skills WHERE skill_name = $1",
+                skill_name,
+            )
+            if not row:
+                return f"Skill '{skill_name}' not found, cannot update"
+            await conn.execute(
+                """
+                UPDATE skills
+                SET skill = $2, skill_description = $3
+                WHERE skill_name = $1
+                """,
+                skill_name,
+                skill,
+                skill_description,
+            )
+            return f"Skill '{skill_name}' updated successfully"
+        finally:
+            await conn.close()
+    except Exception as e:
+        raise RuntimeError(f"Failed to update skill '{skill_name}': {e}")
 
 @tool(description=LS_DESCRIPTION)
 def ls(state: Annotated[State, InjectedState]) -> list[str]:
@@ -155,7 +256,56 @@ def write_file(
         }
     )
     
-@tool(description="Get current date")
+@tool(description=EDIT_DESCRIPTION)
+def edit_file(
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    state: Annotated[dict, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    replace_all: bool = False,
+) -> Union[Command, str]:
+    """Write to a file."""
+    mock_filesystem = state.get("files", {})
+    # Check if file exists in mock filesystem
+    if file_path not in mock_filesystem:
+        return f"Error: File '{file_path}' not found"
+
+    # Get current file content
+    content = mock_filesystem[file_path]
+
+    # Check if old_string exists in the file
+    if old_string not in content:
+        return f"Error: String not found in file: '{old_string}'"
+
+    # If not replace_all, check for uniqueness
+    if not replace_all:
+        occurrences = content.count(old_string)
+        if occurrences > 1:
+            return f"Error: String '{old_string}' appears {occurrences} times in file. Use replace_all=True to replace all instances, or provide a more specific string with surrounding context."
+        elif occurrences == 0:
+            return f"Error: String not found in file: '{old_string}'"
+
+    # Perform the replacement
+    if replace_all:
+        new_content = content.replace(old_string, new_string)
+        replacement_count = content.count(old_string)
+        result_msg = f"Successfully replaced {replacement_count} instance(s) of the string in '{file_path}'"
+    else:
+        new_content = content.replace(
+            old_string, new_string, 1
+        )  # Replace only first occurrence
+        result_msg = f"Successfully replaced string in '{file_path}'"
+
+    # Update the mock filesystem
+    mock_filesystem[file_path] = new_content
+    return Command(
+        update={
+            "files": mock_filesystem,
+            "messages": [ToolMessage(result_msg, tool_call_id=tool_call_id)],
+        }
+    )   
+
 def get_current_date() -> str:
     """Get current date"""
     return datetime.now().strftime("%a %b %d, %Y")
@@ -170,72 +320,18 @@ def internet_search(
     tool_call_id: Annotated[str, InjectedToolCallId],
     query: str,
     max_results:int,
-    topic: Literal["general", "news", "finance"]
+    topic: Literal["general", "news", "finance"],
+    include_raw_content: bool = False,
     
 ):
     try:
         tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-        
-        search_results = tavily_client.search(
+        return tavily_client.search(
             query,
             max_results=max_results,
-            include_raw_content=True,
+            include_raw_content=include_raw_content,
             topic=topic,
         )
-        files = state.get("files", {})
-        saved_files = []
-        summaries = []
-        
-        for result in search_results.get('results', []):
-            try:
-                # Process and summarize results
-                content = result['raw_content']
-                if not content:
-                    continue
-                processed_results = summarize_webpage_content(content)
-                # uniquify file names
-                uid = base64.urlsafe_b64encode(uuid.uuid4().bytes).rstrip(b"=").decode("ascii")[:8]
-                name, ext = os.path.splitext(processed_results.filename)
-                processed_results.filename = f"{name}_{uid}{ext}"
-                file_content = f"""# Search Result: {result['title']}
-
-**URL:** {result['url']}
-**Query:** {query}
-
-## Summary
-{processed_results.summary}
-
-## Raw Content
-{result['raw_content'] if result['raw_content'] else 'No raw content available'}
-"""
-
-                files[processed_results.filename] = file_content
-                saved_files.append(processed_results.filename)
-                summaries.append(f"- {processed_results.filename}: {processed_results.summary}...")
-                
-            except Exception as e:
-                print(f"Error processing search result: {e}")
-                print("Full stacktrace:")
-                traceback.print_exc()
-                continue
-
-        # Create minimal summary for tool message - focus on what was collected
-        summary_text = f"""🔍 Found {len(saved_files)} result(s) for '{query}':
-        
-{chr(10).join(summaries)}
-
-Files: {', '.join(saved_files)}
-💡 Use read_file() to access full details when needed."""
-        
-        return Command(
-            update={
-                "files": files,
-                "messages": [
-                    ToolMessage(summary_text, tool_call_id=tool_call_id)
-                ],
-            }
-        )
-        
     except Exception as e:
         print(f"Error in internet_search: {e}")
         error_message = f"❌ Failed to search for '{query}': {str(e)}"
@@ -245,40 +341,6 @@ Files: {', '.join(saved_files)}
                     ToolMessage(error_message, tool_call_id=tool_call_id)
                 ],
             }
-        )
-
-
-def summarize_webpage_content(webpage_content: str) -> Summary:
-    """Summarize webpage content using the configured summarization model.
-
-    Args:
-        webpage_content: Raw webpage content to summarize
-
-    Returns:
-        Summary object with filename and summary
-    """
-    try:
-        llm_factory = MyLLM(temperature=0.7,tools=[],model="gpt-oss:120b-cloud")
-        llm_web_search = llm_factory.llm_without_tools()
-        llm_for_web_search = llm_web_search.with_structured_output(Summary)
-        # Generate summary
-        content=SUMMARIZE_WEB_SEARCH.format(
-                webpage_content=webpage_content, 
-                date=get_today_str()
-        )
-        summary_and_filename = llm_for_web_search.invoke([
-            HumanMessage(content)
-        ])
-        return summary_and_filename
-
-    except Exception as e:
-        print(f"Error in summarize_webpage_content: {e}")
-        print("Full stacktrace:")
-        traceback.print_exc()
-        # Return a basic summary object on failure
-        return Summary(
-            filename="search_result.md",
-            summary=str(e)
         )
 
 @tool(parse_docstring=True)
@@ -316,21 +378,11 @@ class MyTools:
                 "pandora_sandbox": {
                     "transport": "streamable_http",
                     "url": os.getenv("SANDBOX_URL"),
-                },
-                "virtual-fs": {
-                "transport": "stdio",
-                "command": "npx",
-                "args": ["-y", "mcp-virtual-fs"],
-                "env": {
-                    "DATABASE_URL": os.getenv("POSTGRES_CONNECTION_STRING"),
-                    "VFS_AUTO_INIT": "true"
-                    
-                    }
                 }
             }
         )
         mcp_tools = await client.get_tools()
-        return [write_todos, read_todos, ls, read_file, internet_search,think_tool,get_current_date] + mcp_tools
+        return [write_todos,read_todos,ls,read_file,write_file,edit_file,think_tool,internet_search,list_skills,read_skill,update_skill] + mcp_tools
     
     def getToolsSync(self):
         """Synchronous wrapper for getAllTools"""

@@ -4,13 +4,23 @@ This module contains all the system prompts, tool descriptions, and instruction
 templates used throughout the deep agents educational framework.
 """
 
-INTERNET_SEARCH_DESCRIPTION = """Search web and save detailed results to files while returning minimal context.
+INTERNET_SEARCH_DESCRIPTION = """Search the web using Tavily for current information and documentation.
 
-    Performs web search and saves full content to files for context offloading.
-    Returns only essential information to help the agent decide on next steps.
+    This tool searches the web and returns relevant results. 
+    Args:
+        query: The search query (be specific and detailed)
+        max_results: Number of results to return (default: 5)
+        topic: Search topic type - "general" for most queries, "news" for current events
+        include_raw_content: Include full page content (warning: uses more tokens)
 
     Returns:
-        Command that saves full results to files and provides minimal summary
+        Dictionary containing:
+        - results: List of search results, each with:
+            - title: Page title
+            - url: Page URL
+            - content: Relevant excerpt from the page
+            - score: Relevance score (0-1)
+        - query: The original search query
     """
 
 WRITE_TODOS_DESCRIPTION =""" Create and manage structured task lists for tracking progress through complex workflows.                       
@@ -72,30 +82,15 @@ WRITE_FILE_DESCRIPTION = """  Create a new file or completely overwrite an exist
                                                                                                                  
   Important: This replaces the entire file content. Use edit_file for partial modifications.  """
   
-SUMMARIZE_WEB_SEARCH = """You are creating a minimal summary for research steering - your goal is to help an agent know what information it has collected, NOT to preserve all details.
+EDIT_DESCRIPTION = """Performs exact string replacements in files. 
 
-    <webpage_content>
-    {webpage_content}
-    </webpage_content>
-
-    Create a VERY CONCISE summary focusing on:
-    1. Main topic/subject in 1-2 sentences
-    2. Key information type (facts, tutorial, news, analysis, etc.)  
-    3. Most significant 1-2 findings or points
-
-    Keep the summary under 150 words total. The agent needs to know what's in this file to decide if it should search for more information or use this source.
-
-    Generate a descriptive filename that indicates the content type and topic (e.g., "mcp_protocol_overview.md", "ai_safety_research_2024.md").
-
-    Output format:
-    ```json
-    {{
-    "filename": "descriptive_filename.md",
-    "summary": "Very brief summary under 150 words focusing on main topic and key findings"
-    }}
-    ```
-
-    Today's date: {date}"""
+Usage:
+- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. 
+- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
+- ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
+- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`. 
+- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
     
 AGENT_DESCRIPTION = """You are an AI assistant designed to answer user questions, which may require web searches.
 

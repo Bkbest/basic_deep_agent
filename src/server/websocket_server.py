@@ -170,6 +170,25 @@ async def ensure_users_table():
     finally:
         await conn.close()
 
+async def ensure_skills_table():
+    """Create the skills table if it does not already exist.
+    The table stores unique skill names, skill data, and skill descriptions.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS skills (
+                skill_name VARCHAR(255) PRIMARY KEY,
+                skill TEXT NOT NULL,
+                skill_description TEXT NOT NULL
+            )
+        ''')
+    finally:
+        await conn.close()
+
 async def create_test_user():
     """Create a test user with properly hashed password"""
     connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
@@ -769,6 +788,8 @@ async def lifespan(app: FastAPI):
         print("Ensuring database tables exist...")
         await ensure_users_table()
         print("✅ Users table ensured successfully")
+        await ensure_skills_table()
+        print("✅ Skills table ensured successfully")
         
         # # Create test user with proper hashing
         # print("Creating test user...")
