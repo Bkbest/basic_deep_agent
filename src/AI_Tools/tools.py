@@ -137,21 +137,23 @@ async def read_skill(skill_name: str) -> str:
     except Exception as e:
         raise RuntimeError(f"Failed to read skill '{skill_name}': {e}")
 
-@tool(description="Update an existing skill's skill and/or skill_description in the skills table.", parse_docstring=True)
-async def update_skill(
+@tool(description="Save a skill to the database. If the skill exists, it will be updated; otherwise, a new skill will be inserted.", parse_docstring=True)
+async def save_skill(
     skill_name: str,
     skill: str,
     skill_description: str,
 ) -> str:
-    """Update an existing skill in the 'skills' database table.
+    """Save (insert or update) a skill in the 'skills' database table.
+
+    This tool will insert a new skill if it doesn't exist, or update it if it already exists.
 
     Args:
-        skill_name: The unique key name of the skill to update.
-        skill: The new skill text content.
-        skill_description: The new skill description.
+        skill_name: The unique key name of the skill.
+        skill: The skill text content.
+        skill_description: The description of the skill.
 
     Returns:
-        A confirmation message on success, or an error if the skill does not exist.
+        A confirmation message indicating whether the skill was inserted or updated.
     """
     connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
     if not connection_string:
@@ -160,27 +162,40 @@ async def update_skill(
     try:
         conn = await asyncpg.connect(connection_string)
         try:
+            # Check if skill already exists
             row = await conn.fetchrow(
                 "SELECT skill_name FROM skills WHERE skill_name = $1",
                 skill_name,
             )
-            if not row:
-                return f"Skill '{skill_name}' not found, cannot update"
-            await conn.execute(
-                """
-                UPDATE skills
-                SET skill = $2, skill_description = $3
-                WHERE skill_name = $1
-                """,
-                skill_name,
-                skill,
-                skill_description,
-            )
-            return f"Skill '{skill_name}' updated successfully"
+            if row:
+                # Update existing skill
+                await conn.execute(
+                    """
+                    UPDATE skills
+                    SET skill = $2, skill_description = $3
+                    WHERE skill_name = $1
+                    """,
+                    skill_name,
+                    skill,
+                    skill_description,
+                )
+                return f"Skill '{skill_name}' updated successfully"
+            else:
+                # Insert new skill
+                await conn.execute(
+                    """
+                    INSERT INTO skills (skill_name, skill, skill_description)
+                    VALUES ($1, $2, $3)
+                    """,
+                    skill_name,
+                    skill,
+                    skill_description,
+                )
+                return f"Skill '{skill_name}' inserted successfully"
         finally:
             await conn.close()
     except Exception as e:
-        raise RuntimeError(f"Failed to update skill '{skill_name}': {e}")
+        raise RuntimeError(f"Failed to save skill '{skill_name}': {e}")
 
 @tool(description=LS_DESCRIPTION)
 def ls(state: Annotated[State, InjectedState]) -> list[str]:
@@ -231,7 +246,7 @@ def read_file(
 def write_file(
     file_path: str,
     content: str,
-    state: Annotated[State, InjectedState],
+    state: Annotated[dict, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
     """Write content to a file in the virtual filesystem.
@@ -306,10 +321,6 @@ def edit_file(
         }
     )   
 
-def get_current_date() -> str:
-    """Get current date"""
-    return datetime.now().strftime("%a %b %d, %Y")
-
 def get_today_str() -> str:
     """Get current date"""
     return datetime.now().strftime("%a %b %d, %Y")
@@ -382,10 +393,10 @@ class MyTools:
             }
         )
         mcp_tools = await client.get_tools()
-        return [write_todos,read_todos,ls,read_file,write_file,edit_file,think_tool,internet_search,list_skills,read_skill,update_skill] + mcp_tools
+        return [write_todos,read_todos,ls,read_file,write_file,edit_file,think_tool,internet_search,list_skills,read_skill,save_skill] + mcp_tools
     
     def getToolsSync(self):
         """Synchronous wrapper for getAllTools"""
         import asyncio
         return asyncio.run(self.getAllTools())
-    
+

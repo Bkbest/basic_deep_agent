@@ -38,8 +38,8 @@ async def llm_with_tools(state: State, runtime: Runtime):
     """
     info = runtime.execution_info
     if info.node_attempt > 1:
-        print("sleeping for 30 seconds before retrying.")
-        await asyncio.sleep(30)     
+        print("sleeping for 60 seconds before retrying.")
+        await asyncio.sleep(60)     
     # Create the prompt template with system prompt and messages
     
     summarization_result = summarize_messages(

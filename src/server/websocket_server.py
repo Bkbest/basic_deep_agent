@@ -189,6 +189,31 @@ async def ensure_skills_table():
     finally:
         await conn.close()
 
+async def ensure_cron_configs_table():
+    """Create the cron_configs table if it does not already exist.
+    The table stores cron job configurations with name, schedule, and prompt.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS cron_configs (
+                name VARCHAR(255) PRIMARY KEY,
+                schedule VARCHAR(255) NOT NULL,
+                prompt TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+    finally:
+        await conn.close()
+        
+def get_current_date() -> str:
+    """Get current date"""
+    return datetime.now().strftime("%a %b %d, %Y")
+
 async def create_test_user():
     """Create a test user with properly hashed password"""
     connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
@@ -790,6 +815,8 @@ async def lifespan(app: FastAPI):
         print("✅ Users table ensured successfully")
         await ensure_skills_table()
         print("✅ Skills table ensured successfully")
+        await ensure_cron_configs_table()
+        print("✅ Cron configs table ensured successfully")
         
         # # Create test user with proper hashing
         # print("Creating test user...")
@@ -1152,8 +1179,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 thread_id = "1"
                 user_message = data
             
-            # Send acknowledgment
-            await websocket.send_text(f"Starting workflow with message: {user_message}")
+            # acknowledgment
+            print(f"Starting workflow with message: {user_message}")
             
             # Run the workflow and stream chunks
             try:

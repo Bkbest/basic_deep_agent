@@ -33,3 +33,5 @@ class State(AgentState):
     todos: list[Todo]
     files: Annotated[dict[str, str], file_reducer]
     summary: RunningSummary | None
+    current_date: str
+    skills_description: str

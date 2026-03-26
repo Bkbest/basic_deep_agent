@@ -16,6 +16,7 @@ import os
 from dotenv import load_dotenv
 import asyncpg
 from langgraph.types import RetryPolicy
+from datetime import datetime
 
 load_dotenv()
 
@@ -26,7 +27,7 @@ def create_research_brief_workflow():
     all_tools = MyTools().getToolsSync()
 
     # Add nodes
-    workflow.add_node("llm_with_tools", llm_with_tools)
+    workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("tool_node", ToolNode(all_tools))
 
     # Add edges
@@ -74,12 +75,58 @@ async def invoke_workflow_stream(thread_id, message):
         
     
         graph = workflow.compile(checkpointer=checkpointer)
+        skills = await get_skills_description()
         
         
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
         
-        async for chunk in graph.astream({"messages": message},stream_mode="updates", config=config ):
+        async for chunk in graph.astream({"messages": message,"current_date": get_current_date(), "skills_description": skills},stream_mode="updates", config=config ):
             yield chunk
+
+
+async def invoke_workflow(prompt: str, thread_id: str = "default"):
+    """
+    Invoke the workflow with a prompt and return the full output.
+    """
+    graph = create_research_brief_workflow()
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
+   
+    output = graph.invoke(
+       {"messages": prompt,"current_date": get_current_date(), "skills_description": await get_skills_description()},
+        config=config
+    )
+    if output and 'messages' in output:
+        agent_response = output['messages'][-1].content if output['messages'] else "No response"
+        return agent_response
+    return "No output from workflow"
+
+            
+def get_current_date() -> str:
+    """Get current date"""
+    return datetime.now().strftime("%a %b %d, %Y")
+
+
+async def get_skills_description() -> str:
+    """Fetch all skills from the database and format them as a readable string."""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        return "Skills: none (database not configured)"
+
+    try:
+        conn = await asyncpg.connect(connection_string)
+        try:
+            rows = await conn.fetch("SELECT skill_name, skill_description FROM skills")
+            if not rows:
+                return "Skills: none"
+            lines = ["Skills:"]
+            for row in rows:
+                lines.append(f"  - {row['skill_name']}: {row['skill_description']}")
+            return "\n".join(lines)
+        finally:
+            await conn.close()
+    except Exception:
+        return "Skills: unable to fetch"
+
             
 async def delete_thread(thread_id):
     """
@@ -214,7 +261,7 @@ if __name__ == "__main__":
     async def main():
         
         # Then invoke the workflow stream
-        async for chunk in invoke_workflow_stream("16", [HumanMessage("write code to scrape india's wikipedia's page, test it and give me the code.")]):
+        async for chunk in invoke_workflow_stream("17", [HumanMessage("do you know any skills, don't access any tools.")]):
             print(chunk)
         
         # Finally, clean up by deleting the thread
