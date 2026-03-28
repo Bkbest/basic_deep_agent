@@ -46,14 +46,15 @@ async def llm_with_tools(state: State, runtime: Runtime):
         state["messages"],
         running_summary=state.get("summary"),
         model=llm,
-        max_tokens=6000,
-        max_tokens_before_summary=6000,
-        max_summary_tokens=3000
+        max_tokens=10000,
+        max_tokens_before_summary=10000,
+        max_summary_tokens=7000
     )
     messags_after_summarization = summarization_result.messages
     prompt_template = ChatPromptTemplate.from_messages  ([
             ("system", AGENT_DESCRIPTION)
         ]+messags_after_summarization)
+    await asyncio.sleep(10)
     chain = prompt_template.invoke(state)
     response = llm_tools.invoke(chain)
     state_update = {"messages": [response]}
