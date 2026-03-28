@@ -42,8 +42,9 @@ EOF
 sudo systemctl daemon-reload
 
 # Enable and start the service
-sudo systemctl enable --now "${SERVICE_NAME}.service" 
-
+sudo systemctl enable --now "${SERVICE_NAME}.service"
+# Ensure service is restarted after enable
+sudo systemctl restart "${SERVICE_NAME}.service"
 
 echo "Deployed. FastAPI service is installed and enabled: ${SERVICE_NAME}.service"
 echo "Check status with: sudo systemctl status ${SERVICE_NAME}.service"

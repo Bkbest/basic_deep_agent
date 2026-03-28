@@ -78,7 +78,7 @@ async def invoke_workflow_stream(thread_id, message):
         skills = await get_skills_description()
         
         
-        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
         
         async for chunk in graph.astream({"messages": message,"current_date": get_current_date(), "skills_description": skills},stream_mode="updates", config=config ):
             yield chunk
@@ -89,7 +89,7 @@ async def invoke_workflow(prompt: str, thread_id: str = "default"):
     Invoke the workflow with a prompt and return the full output.
     """
     graph = create_research_brief_workflow()
-    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
    
     output = graph.invoke(
        {"messages": prompt,"current_date": get_current_date(), "skills_description": await get_skills_description()},
@@ -261,11 +261,11 @@ if __name__ == "__main__":
     async def main():
         
         # Then invoke the workflow stream
-        async for chunk in invoke_workflow_stream("17", [HumanMessage("do you know any skills, don't access any tools.")]):
-            print(chunk)
+        # async for chunk in invoke_workflow_stream("17", [HumanMessage("do you know any skills, don't access any tools.")]):
+        #     print(chunk)
         
         # Finally, clean up by deleting the thread
-        # print(await get_threads())
-        # await delete_thread("2")
+        print(await get_threads())
+        # await print(get_thread("thread_2e61jwp1a_1774693865061"))
     
     asyncio.run(main())
