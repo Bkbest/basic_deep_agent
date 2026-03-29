@@ -1203,6 +1203,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 thread_id = message_data.get("thread_id", "default")
                 user_message = message_data.get("message", "")
                 
+                # Check if this is a reconnect message for an existing thread
+                if user_message == "reconnect":
+                    # Just update the websocket in the cache without running workflow
+                    await register_websocket(thread_id, websocket)
+                    registered_thread_id = thread_id
+                    print(f"📡 WebSocket reconnected and registered for thread: {thread_id}")
+                    continue
+                
                 if not user_message:
                     await websocket.send_text("Error: No message provided")
                     continue
