@@ -55,8 +55,8 @@ async def llm_with_tools(state: State, runtime: Runtime):
             ("system", AGENT_DESCRIPTION)
         ]+messags_after_summarization)
     await asyncio.sleep(10)
-    chain = prompt_template.invoke(state)
-    response = llm_tools.invoke(chain)
+    chain = await prompt_template.ainvoke(state)
+    response = await llm_tools.ainvoke(chain)
     state_update = {"messages": [response]}
     if summarization_result.running_summary:
         state_update["summary"] = summarization_result.running_summary
