@@ -1182,25 +1182,42 @@ async def websocket_endpoint(websocket: WebSocket):
             # acknowledgment
             print(f"Starting workflow with message: {user_message}")
             
-            # Run the workflow and stream chunks
-            try:
-                # Create the message in the format expected by the workflow
-                messages = [HumanMessage(content=user_message)]
-                
-                # Stream the workflow results
-                async for chunk in invoke_workflow_stream(thread_id, messages):
-                    # Extract meaningful content and convert to clean JSON
-                    clean_chunk = extract_meaningful_content(chunk)
-                    # Include thread_id in the message for client-side filtering
-                    message_with_thread = {
-                        'thread_id': thread_id,
-                        'data': clean_chunk
-                    }
-                    await websocket.send_text(load.dumps(message_with_thread))
+            # Run the workflow as a background task so it continues even if WebSocket disconnects
+            async def run_workflow_background():
+                """Run workflow in background, continuing even if WebSocket connection is lost."""
+                try:
+                    # Create the message in the format expected by the workflow
+                    messages = [HumanMessage(content=user_message)]
                     
-            except Exception as e:
-                import traceback
-                await websocket.send_text(f"Error running workflow: {traceback.format_exc()}")
+                    # Stream the workflow results
+                    async for chunk in invoke_workflow_stream(thread_id, messages):
+                        # Extract meaningful content and convert to clean JSON
+                        clean_chunk = extract_meaningful_content(chunk)
+                        # Include thread_id in the message for client-side filtering
+                        message_with_thread = {
+                            'thread_id': thread_id,
+                            'data': clean_chunk
+                        }
+                        try:
+                            # Try to send to WebSocket, but if connection is closed, continue anyway
+                            await websocket.send_text(load.dumps(message_with_thread))
+                        except Exception as send_error:
+                            # WebSocket disconnected, but workflow continues
+                            print(f"⚠️  Could not send to WebSocket (connection may be closed): {send_error}")
+                            # Workflow will continue running in background
+                            pass
+                        
+                except Exception as e:
+                    import traceback
+                    print(f"❌ Error in background workflow execution: {traceback.format_exc()}")
+                    try:
+                        await websocket.send_text(f"Error running workflow: {traceback.format_exc()}")
+                    except:
+                        # WebSocket already closed
+                        pass
+            
+            # Start the workflow as a background task (non-blocking)
+            asyncio.create_task(run_workflow_background())
                 
     except WebSocketDisconnect:
         # Client disconnected - no need to manage global state
