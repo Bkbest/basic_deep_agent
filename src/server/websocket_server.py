@@ -251,6 +251,34 @@ async def create_test_user():
 from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
+# WebSocket connection cache: thread_id -> WebSocket
+# This allows background tasks to send messages to the latest active connection for a thread
+# Thread can have multiple connections (multiple browser tabs), we track the latest per thread_id
+websocket_cache: dict[str, WebSocket] = {}
+# Lock for thread-safe access to the websocket cache
+websocket_cache_lock = asyncio.Lock()
+
+
+async def register_websocket(thread_id: str, websocket: WebSocket):
+    """Register a WebSocket connection for a thread_id."""
+    async with websocket_cache_lock:
+        websocket_cache[thread_id] = websocket
+        print(f"📡 WebSocket registered for thread: {thread_id}")
+
+
+async def unregister_websocket(thread_id: str):
+    """Unregister a WebSocket connection for a thread_id."""
+    async with websocket_cache_lock:
+        if thread_id in websocket_cache:
+            del websocket_cache[thread_id]
+            print(f"📡 WebSocket unregistered for thread: {thread_id}")
+
+
+async def get_websocket(thread_id: str) -> Optional[WebSocket]:
+    """Get the latest active WebSocket connection for a thread_id."""
+    async with websocket_cache_lock:
+        return websocket_cache.get(thread_id)
+
 def extract_meaningful_content(chunk: dict) -> dict:
     """
     Extract messages from workflow chunks and convert to clean JSON format.
@@ -1159,6 +1187,11 @@ async def websocket_endpoint(websocket: WebSocket):
         return
     
     await websocket.accept()
+    
+    # Get thread_id from the client's first message to register this connection
+    # Default to "default" thread if not specified
+    registered_thread_id = "default"
+    
     try:
         while True:
             # Receive message from client
@@ -1167,7 +1200,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Parse the message (expecting JSON with thread_id and message)
             try:
                 message_data = json.loads(data)
-                thread_id = message_data.get("thread_id", "1")
+                thread_id = message_data.get("thread_id", "default")
                 user_message = message_data.get("message", "")
                 
                 if not user_message:
@@ -1176,31 +1209,41 @@ async def websocket_endpoint(websocket: WebSocket):
                     
             except json.JSONDecodeError:
                 # If not JSON, treat as simple message
-                thread_id = "1"
+                thread_id = "default"
                 user_message = data
+            
+            # Register this websocket for the thread_id on first message
+            if registered_thread_id == "default" and thread_id != "default":
+                registered_thread_id = thread_id
+                await register_websocket(thread_id, websocket)
+                print(f"📡 WebSocket connected and registered for thread: {thread_id}")
             
             # acknowledgment
             print(f"Starting workflow with message: {user_message}")
             
             # Run the workflow as a background task so it continues even if WebSocket disconnects
-            async def run_workflow_background():
+            async def run_workflow_background(workflow_thread_id: str, workflow_message: str):
                 """Run workflow in background, continuing even if WebSocket connection is lost."""
                 try:
                     # Create the message in the format expected by the workflow
-                    messages = [HumanMessage(content=user_message)]
+                    messages = [HumanMessage(content=workflow_message)]
                     
                     # Stream the workflow results
-                    async for chunk in invoke_workflow_stream(thread_id, messages):
+                    async for chunk in invoke_workflow_stream(workflow_thread_id, messages):
                         # Extract meaningful content and convert to clean JSON
                         clean_chunk = extract_meaningful_content(chunk)
                         # Include thread_id in the message for client-side filtering
                         message_with_thread = {
-                            'thread_id': thread_id,
+                            'thread_id': workflow_thread_id,
                             'data': clean_chunk
                         }
                         try:
-                            # Try to send to WebSocket, but if connection is closed, continue anyway
-                            await websocket.send_text(load.dumps(message_with_thread))
+                            # Get the LATEST websocket from cache (handles reconnect scenarios)
+                            latest_ws = await get_websocket(workflow_thread_id)
+                            if latest_ws:
+                                await latest_ws.send_text(load.dumps(message_with_thread))
+                            else:
+                                print(f"⚠️  No active WebSocket for thread {workflow_thread_id}, message not sent")
                         except Exception as send_error:
                             # WebSocket disconnected, but workflow continues
                             print(f"⚠️  Could not send to WebSocket (connection may be closed): {send_error}")
@@ -1211,16 +1254,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     import traceback
                     print(f"❌ Error in background workflow execution: {traceback.format_exc()}")
                     try:
-                        await websocket.send_text(f"Error running workflow: {traceback.format_exc()}")
+                        latest_ws = await get_websocket(workflow_thread_id)
+                        if latest_ws:
+                            await latest_ws.send_text(f"Error running workflow: {traceback.format_exc()}")
                     except:
                         # WebSocket already closed
                         pass
             
             # Start the workflow as a background task (non-blocking)
-            asyncio.create_task(run_workflow_background())
+            asyncio.create_task(run_workflow_background(thread_id, user_message))
                 
     except WebSocketDisconnect:
-        # Client disconnected - no need to manage global state
+        # Client disconnected - unregister from cache
+        if registered_thread_id != "default":
+            await unregister_websocket(registered_thread_id)
         print(f"WebSocket disconnected for user: {username}")
         pass
 
