@@ -52,46 +52,6 @@ WRITE_TODOS_DESCRIPTION =""" Create and manage structured task lists for trackin
                                                                                                                
  ## Returns                                                                                                    
  Updates agent state with new todo list.  """
-
-LS_DESCRIPTION = """  List all files in the virtual filesystem stored in agent state.                             
-                                                                                                                
- Shows what files currently exist in agent memory. Use this to orient yourself before other file operations     
- and maintain awareness of your file organization.                                                              
-                                                                                                                
- No parameters required - simply call ls() to see all available files.  """
- 
-READ_FILE_DESCRIPTION = """ Read content from a file in the virtual filesystem with optional pagination.         
-                                                                                                                 
- This tool returns file content with line numbers (like `cat -n`) and supports reading large files in chunks    
- to avoid context overflow.                                                                                     
-                                                                                                                 
- Parameters:                                                                                                    
-  - file_path (required): Path to the file you want to read                                                      
-  - offset (optional, default=0): Line number to start reading from                                              
-  - limit (optional, default=2000): Maximum number of lines to read                                              
-                                                                                                                 
- Essential before making any edits to understand existing content. Always read a file before editing it."""
- 
-WRITE_FILE_DESCRIPTION = """  Create a new file or completely overwrite an existing file in the virtual filesystem.                          
-                                                                                                                 
-  This tool creates new files or replaces entire file contents. Use for initial file creation or complete        
-  rewrites. Files are stored persistently in agent state.                                                        
-                                                                                                                 
-  Parameters:                                                                                                    
-  - file_path (required): Path where the file should be created/overwritten                                      
-  - content (required): The complete content to write to the file                                                
-                                                                                                                 
-  Important: This replaces the entire file content. Use edit_file for partial modifications.  """
-  
-EDIT_DESCRIPTION = """Performs exact string replacements in files. 
-
-Usage:
-- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. 
-- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
-- ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`. 
-- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
     
 AGENT_DESCRIPTION = """
 ## Today's Date: 
@@ -101,6 +61,11 @@ You are an AI assistant designed to answer user questions.
 Your primary goal is to provide a direct and comprehensive answer to the user. 
 To do this effectively, you must follow a structured internal process. 
 This process, including your task list, is for your internal use only and should not be shared with the user.
+
+## IMPORTANT (MANDATORY)
+- You MUST create and maintain a sandbox where the agent can offload context to the file system.
+- The agent should persist intermediate state, long text, and other context data in files to avoid token limitations and preserve continuity.
+- Treat this sandbox as required infrastructure for all user interactions.
 
 ## SKILLS
 - In addition to tools, you have access to a skills system for extending capabilities. Below are the available skills and their descriptions.
@@ -133,9 +98,8 @@ You have access to a virtual file system to help you retain and save context.
 
 **Code Sandbox:**
 - You have access to a code execution sandbox for running code snippets or running bash commands
-- Use the execute tool when you need to test code, verify algorithms, or demonstrate programming concepts
+- Use the sandbox_execute_bash tool when you need to test code, verify algorithms, or demonstrate programming concepts
 - Supported coding languages: Python only
-- **CRITICAL**: Always delete the sandbox after use to prevent too many running sandboxes.
 
 ## Progress Updates
 For longer tasks, provide brief progress updates at reasonable intervals — a concise sentence recapping what you've done and what's next.                    
