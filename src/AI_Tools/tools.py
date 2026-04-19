@@ -14,6 +14,9 @@ from tavily import TavilyClient
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+
+# Get project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 from AI_STRUCT_OUT.summary import Summary
 import asyncpg
 from AI_LLM.agent_llm import MyLLM
@@ -30,9 +33,9 @@ from langchain_google_community.calendar.utils import (
 load_dotenv()
 
 credentials = get_google_credentials(
-        token_file="token.json",
+        token_file=os.path.join(PROJECT_ROOT, "token.json"),
         scopes=["https://www.googleapis.com/auth/calendar"],
-        client_secrets_file="gcp-oauth.keys.json.json",
+        client_secrets_file=os.path.join(PROJECT_ROOT, "gcp-oauth.keys.json.json"),
 )
 api_resource = build_resouce_service(credentials=credentials)
 
