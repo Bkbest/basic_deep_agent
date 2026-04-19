@@ -1,10 +1,11 @@
 from langchain_core.tools import tool, InjectedToolCallId
 from AI_State.state import Todo
 from langgraph.types import Command
-from langchain_core.messages import ToolMessage, HumanMessage
-from typing_extensions import Annotated, Literal,Union
+from langchain_core.messages import ToolMessage
+from typing_extensions import Annotated, Literal
 from AI_State.state import State
 from langgraph.prebuilt.tool_node import InjectedState
+from langchain_google_community import CalendarToolkit
 from AI_Sys_Prompt.system_prompt_agent import (
     WRITE_TODOS_DESCRIPTION,
     INTERNET_SEARCH_DESCRIPTION,
@@ -18,12 +19,39 @@ import asyncpg
 from AI_LLM.agent_llm import MyLLM
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
+from langchain_google_community.calendar.search_events import CalendarSearchEvents
+import json
+from langchain_google_community.calendar.utils import (
+    build_resouce_service,
+    get_google_credentials,
+)
 
 # Load environment variables
 load_dotenv()
 
+credentials = get_google_credentials(
+        token_file="token.json",
+        scopes=["https://www.googleapis.com/auth/calendar"],
+        client_secrets_file="gcp-oauth.keys.json.json",
+)
+api_resource = build_resouce_service(credentials=credentials)
 
-
+@tool
+async def SEARCH_CALENDAR_EVENT(
+    query: str,
+    min_datetime: str,
+    max_datetime: str
+):
+    """Search for calendar events by query and datetime range.this is the date formate '%Y-%m-%d %H:%M:%S' """
+    event = CalendarSearchEvents(api_resource=api_resource)
+    return event.ainvoke({
+        "query": query,
+        "min_datetime": min_datetime,
+        "max_datetime": max_datetime,
+        "calendars_info": json.dumps([
+            {"id": "aravindbk21@gmail.com", "summary": "aravindbk21@gmail.com", "timeZone": "Asia/Kolkata"}
+        ])
+    })
 
 @tool(description=WRITE_TODOS_DESCRIPTION,parse_docstring=True)
 def write_todos(
@@ -262,8 +290,13 @@ class MyTools:
                 }
             }
         )
+        toolkit = CalendarToolkit(api_resource=api_resource)
+        tools = toolkit.get_tools()
+        # Filter calendar tools efficiently in one pass
+        calendar_tool_names = ["get_current_datetime", "delete_calendar_event", "create_calendar_event", "get_calendars_info", "update_calendar_event"]
+        filtered_calendar_tools = [tool for tool in tools if tool.name in calendar_tool_names]
         mcp_tools = await client.get_tools()
-        return [write_todos,read_todos,think_tool,internet_search,list_skills,read_skill,save_skill] + mcp_tools
+        return [write_todos,read_todos,think_tool,internet_search,list_skills,read_skill,save_skill,SEARCH_CALENDAR_EVENT] + mcp_tools + filtered_calendar_tools
     
     def getToolsSync(self):
         """Synchronous wrapper for getAllTools"""

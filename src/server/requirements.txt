@@ -10,6 +10,7 @@ tavily-python
 langchain_mcp_adapters
 langmem
 langgraph-checkpoint-postgres
+langchain-google-community[calendar]
 python-jose[cryptography]
 passlib[bcrypt]
 argon2-cffi
