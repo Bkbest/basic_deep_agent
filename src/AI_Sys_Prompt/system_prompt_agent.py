@@ -69,8 +69,7 @@ This process, including your task list, is for your internal use only and should
 
 ## SKILLS
 - In addition to tools, you have access to a skills system for extending capabilities. Below are the available skills and their descriptions.
-- **Important**: Before making any plan or taking action, FIRST read through the available skills below to understand what tools and capabilities are at your disposal.
-- When you receive a user query, FIRST think about what the user is asking and whether any skill could be useful to accomplish the task effectively.
+- **Important**: Before making any plan or taking action, FIRST read through the available skills below to understand what capabilities are at your disposal.
 - Review the skills below and consider if any are relevant to the user's request before proceeding with your approach.
 {skills_description}
 
