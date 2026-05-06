@@ -1160,6 +1160,24 @@ def get_thread_message_count(result):
     
     return 0
 
+def prompt_func(data):
+    text = data["text"]
+    image = data["image"]
+
+    image_part = {
+        "type": "image_url",
+        "image_url": f"data:image/png;base64,{image}",
+    }
+
+    content_parts = []
+
+    text_part = {"type": "text", "text": text}
+
+    content_parts.append(image_part)
+    content_parts.append(text_part)
+
+    return [HumanMessage(content=content_parts)]
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -1202,6 +1220,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 message_data = json.loads(data)
                 thread_id = message_data.get("thread_id", "default")
                 user_message = message_data.get("message", "")
+                image = message_data.get("image", None)  # Optional image data for future use
+                document = message_data.get("document", None)  # Optional document data for future use
+                # ```json
+                # {
+                # "thread_id": "...",
+                # "message": "user text",
+                # "image": {
+                #     "filename": "photo.png",
+                #     "mime_type": "image/png",
+                #     "data": "<base64 string, no data: prefix>"
+                # },
+                # "document": {
+                #     "filename": "report.pdf",
+                #     "mime_type": "application/pdf",
+                #     "data": "<base64 string, no data: prefix>"
+                # }
+                # }```
                 
                 # Check if this is a reconnect message for an existing thread
                 if user_message == "reconnect":
@@ -1233,8 +1268,13 @@ async def websocket_endpoint(websocket: WebSocket):
             async def run_workflow_background(workflow_thread_id: str, workflow_message: str):
                 """Run workflow in background, continuing even if WebSocket connection is lost."""
                 try:
-                    # Create the message in the format expected by the workflow
-                    messages = [HumanMessage(content=workflow_message)]
+                    
+                    if image is not None:
+                        human_message_with_image = prompt_func({"text": workflow_message, "image": image["data"]})
+                        messages = [human_message_with_image]
+                    else:
+                        # Create the message in the format expected by the workflow
+                        messages = [HumanMessage(content=workflow_message)]
                     
                     # Stream the workflow results
                     async for chunk in invoke_workflow_stream(workflow_thread_id, messages):
