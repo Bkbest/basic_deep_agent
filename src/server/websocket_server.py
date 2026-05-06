@@ -1271,7 +1271,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     if image is not None:
                         human_message_with_image = prompt_func({"text": workflow_message, "image": image["data"]})
-                        messages = [human_message_with_image]
+                        messages = human_message_with_image
                     else:
                         # Create the message in the format expected by the workflow
                         messages = [HumanMessage(content=workflow_message)]
