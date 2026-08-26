@@ -8,7 +8,7 @@ from AI_STRUCT_OUT.summary import Summary
 
 class MyLLM:
     """Custom LLM wrapper that provides access to both base LLM and LLM with tools."""
-    def __init__(self,temperature,tools,model="minimax-m2:cloud") -> None:
+    def __init__(self,temperature,tools,model="minimax-m2.7:cloud") -> None:
         """
         Initializes the MyLLM instance with the given temperature and tools.
 
