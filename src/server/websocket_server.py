@@ -249,6 +249,7 @@ async def create_test_user():
 
 
 from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread
+from AI_Tools.document_processor import pdf_to_images
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # WebSocket connection cache: thread_id -> WebSocket
@@ -1161,20 +1162,50 @@ def get_thread_message_count(result):
     return 0
 
 def prompt_func(data):
-    text = data["text"]
-    image = data["image"]
-
-    image_part = {
-        "type": "image_url",
-        "image_url": f"data:image/png;base64,{image}",
-    }
+    """
+    Build a HumanMessage with multimodal content from text, image, and doc_images.
+    
+    Args:
+        data: Dict that may contain:
+            - text: str - The text message
+            - image: str - Base64 encoded image (direct upload)
+            - doc_images: list of dicts with 'page' (int) and 'image' (base64 str)
+                         representing pages converted from PDF/DOC/TXT/MD
+    
+    Returns:
+        HumanMessage with content parts for multimodal input
+    """
+    text = data.get("text", "")
+    image = data.get("image")
+    doc_images = data.get("doc_images", [])
 
     content_parts = []
 
-    text_part = {"type": "text", "text": text}
+    # Existing image flow (direct uploads like photos)
+    if image:
+        image_part = {
+            "type": "image_url",
+            "image_url": f"data:image/png;base64,{image}",
+        }
+        content_parts.append(image_part)
 
-    content_parts.append(image_part)
-    content_parts.append(text_part)
+    # New doc_images flow (converted from PDF pages)
+    # Each page is a separate image with page number
+    if doc_images:
+        for page_data in doc_images:
+            page_image = page_data.get('image', '')
+            if page_image:
+                # Create image_url content for each PDF page
+                image_url_obj = {
+                    "type": "image_url",
+                    "image_url": f"data:image/png;base64,{page_image}",
+                }
+                content_parts.append(image_url_obj)
+
+    # Text part
+    if text:
+        text_part = {"type": "text", "text": text}
+        content_parts.append(text_part)
 
     return [HumanMessage(content=content_parts)]
 
@@ -1265,12 +1296,31 @@ async def websocket_endpoint(websocket: WebSocket):
             print(f"Starting workflow with message: {user_message}")
             
             # Run the workflow as a background task so it continues even if WebSocket disconnects
-            async def run_workflow_background(workflow_thread_id: str, workflow_message: str):
+            async def run_workflow_background(workflow_thread_id: str, workflow_message: str, workflow_document: dict = None):
                 """Run workflow in background, continuing even if WebSocket connection is lost."""
                 try:
-                    
+                    # Process PDF document if provided
+                    doc_images = []
+                    if workflow_document is not None:
+                        try:
+                            doc_images = pdf_to_images(workflow_document)
+                            print(f"📄 Document processed into {len(doc_images)} page(s)")
+                        except Exception as doc_error:
+                            print(f"⚠️  Error processing document: {doc_error}")
+                            # Continue without document images rather than failing entirely
+
                     if image is not None:
-                        human_message_with_image = prompt_func({"text": workflow_message, "image": image["data"]})
+                        human_message_with_image = prompt_func({
+                            "text": workflow_message, 
+                            "image": image["data"]
+                        })
+                        messages = human_message_with_image
+                    elif doc_images:
+                        # Document only (no direct image), but has doc_images
+                        human_message_with_image = prompt_func({
+                            "text": workflow_message, 
+                            "doc_images": doc_images
+                        })
                         messages = human_message_with_image
                     else:
                         # Create the message in the format expected by the workflow
@@ -1310,7 +1360,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         pass
             
             # Start the workflow as a background task (non-blocking)
-            asyncio.create_task(run_workflow_background(thread_id, user_message))
+            asyncio.create_task(run_workflow_background(thread_id, user_message, document))
                 
     except WebSocketDisconnect:
         # Client disconnected - unregister from cache

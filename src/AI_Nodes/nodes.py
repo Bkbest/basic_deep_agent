@@ -89,7 +89,7 @@ async def llm_with_tools(state: State, runtime: Runtime):
         human_msg = HumanMessage(content="Look at the summary and the conversation below and decide what to do next.")
         messags_after_summarization.insert(second_system_idx, human_msg)
         print(messags_after_summarization)
-    await asyncio.sleep(5)
+    await asyncio.sleep(1)
     response = await llm_tools.ainvoke(messags_after_summarization)
     state_update = {"messages": [response]}
     if summarization_result.running_summary:
