@@ -55,6 +55,10 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+class CreateThreadRequest(BaseModel):
+    thread_id: str
+    soul: str = None
+
 # Password utilities
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password with fallback handling for different hash formats."""
@@ -920,19 +924,18 @@ async def get_threads_endpoint(username: str = Depends(get_current_user)):
         return {"error": f"Failed to fetch threads: {str(e)}"}
 
 @app.post("/api/thread")
-async def create_thread_endpoint(thread_id: str, soul: str = None, username: str = Depends(get_current_user)):
+async def create_thread_endpoint(request: CreateThreadRequest, username: str = Depends(get_current_user)):
     """
     Create a new thread with an optional soul (agent personality/prompt).
     
     Args:
-        thread_id: Unique identifier for the thread
-        soul: Optional text describing the agent's personality or system prompt
+        request: CreateThreadRequest with thread_id and optional soul
         username: Authenticated user (from JWT token)
     """
     try:
-        print(f"Creating thread {thread_id} for user: {username}")
-        await create_thread(thread_id, soul)
-        return {"success": True, "thread_id": thread_id, "soul": soul}
+        print(f"Creating thread {request.thread_id} for user: {username}")
+        await create_thread(request.thread_id, request.soul)
+        return {"success": True, "thread_id": request.thread_id, "soul": request.soul}
     except Exception as e:
         print(f"Error creating thread: {e}")
         return {"error": f"Failed to create thread: {str(e)}"}
