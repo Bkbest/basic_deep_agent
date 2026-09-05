@@ -192,10 +192,21 @@ async def create_thread(thread_id, soul: str = None):
                 pass  # Column might already exist
             
             # Insert the thread_id with soul
-            await conn.execute(
-                'INSERT INTO threads (thread_id, soul) VALUES ($1, $2) ON CONFLICT (thread_id) DO UPDATE SET soul = $2',
-                thread_id, soul
-            )
+            # If thread exists and soul is not None, update soul; otherwise keep existing soul
+            if soul is not None:
+                # Update if exists, insert if not
+                await conn.execute(
+                    '''INSERT INTO threads (thread_id, soul) VALUES ($1, $2) 
+                       ON CONFLICT (thread_id) DO UPDATE SET soul = $2''',
+                    thread_id, soul
+                )
+            else:
+                # Only insert if not exists, do nothing if exists
+                await conn.execute(
+                    '''INSERT INTO threads (thread_id, soul) VALUES ($1, $2) 
+                       ON CONFLICT (thread_id) DO NOTHING''',
+                    thread_id, soul
+                )
             
         finally:
             await conn.close()
