@@ -160,7 +160,7 @@ async def delete_thread(thread_id):
         print(f"Error in delete_thread: {e}")
         
         
-async def create_thread(thread_id):
+async def create_thread(thread_id, soul: str = None):
     """
     create a new thread by inserting thread_id into threads table
     """
@@ -174,18 +174,27 @@ async def create_thread(thread_id):
         conn = await asyncpg.connect(connection_string)
         
         try:
-            # Create threads table if it doesn't exist
+            # Create threads table if it doesn't exist (with soul column)
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS threads (
                     thread_id VARCHAR(255) PRIMARY KEY,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    soul TEXT
                 )
             ''')
             
-            # Insert the thread_id
+            # Add soul column if it doesn't exist (for existing tables)
+            try:
+                await conn.execute('''
+                    ALTER TABLE threads ADD COLUMN IF NOT EXISTS soul TEXT
+                ''')
+            except Exception:
+                pass  # Column might already exist
+            
+            # Insert the thread_id with soul
             await conn.execute(
-                'INSERT INTO threads (thread_id) VALUES ($1) ON CONFLICT (thread_id) DO NOTHING',
-                thread_id
+                'INSERT INTO threads (thread_id, soul) VALUES ($1, $2) ON CONFLICT (thread_id) DO UPDATE SET soul = $2',
+                thread_id, soul
             )
             
         finally:
@@ -206,14 +215,15 @@ async def get_threads():
     try:
         conn = await asyncpg.connect(connection_string)
         try:
-            # Query distinct thread_ids from the threads table
-            rows = await conn.fetch('SELECT thread_id, created_at FROM threads ORDER BY created_at DESC')
+            # Query distinct thread_ids from the threads table (including soul)
+            rows = await conn.fetch('SELECT thread_id, created_at, soul FROM threads ORDER BY created_at DESC')
             
             threads = []
             for row in rows:
                 threads.append({
                     "thread_id": row['thread_id'],
-                    "created_at": row['created_at'].isoformat() if row['created_at'] else None
+                    "created_at": row['created_at'].isoformat() if row['created_at'] else None,
+                    "soul": row['soul']
                 })
             
             return {"threads": threads, "count": len(threads)}

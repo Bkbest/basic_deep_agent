@@ -248,7 +248,7 @@ async def create_test_user():
 
 
 
-from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread
+from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread, create_thread
 from AI_Tools.document_processor import pdf_to_images
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -918,6 +918,24 @@ async def get_threads_endpoint(username: str = Depends(get_current_user)):
     except Exception as e:
         print(f"Error fetching threads: {e}")
         return {"error": f"Failed to fetch threads: {str(e)}"}
+
+@app.post("/api/thread")
+async def create_thread_endpoint(thread_id: str, soul: str = None, username: str = Depends(get_current_user)):
+    """
+    Create a new thread with an optional soul (agent personality/prompt).
+    
+    Args:
+        thread_id: Unique identifier for the thread
+        soul: Optional text describing the agent's personality or system prompt
+        username: Authenticated user (from JWT token)
+    """
+    try:
+        print(f"Creating thread {thread_id} for user: {username}")
+        await create_thread(thread_id, soul)
+        return {"success": True, "thread_id": thread_id, "soul": soul}
+    except Exception as e:
+        print(f"Error creating thread: {e}")
+        return {"error": f"Failed to create thread: {str(e)}"}
 
 @app.get("/api/health")
 async def health_check():
