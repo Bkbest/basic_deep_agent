@@ -35,3 +35,4 @@ class State(AgentState):
     summary: RunningSummary | None
     current_date: str
     skills_description: str
+    soul: str | None

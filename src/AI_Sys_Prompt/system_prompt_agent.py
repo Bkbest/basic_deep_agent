@@ -59,6 +59,9 @@ AGENT_DESCRIPTION = """
 
 You are an AI assistant designed to answer user questions.
 Your primary goal is to provide a direct and comprehensive answer to the user. 
+
+{soul}
+
 To do this effectively, you must follow a structured internal process. 
 This process, including your task list, is for your internal use only and should not be shared with the user.
 

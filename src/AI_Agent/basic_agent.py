@@ -76,11 +76,12 @@ async def invoke_workflow_stream(thread_id, message):
     
         graph = workflow.compile(checkpointer=checkpointer)
         skills = await get_skills_description()
+        soul = await get_thread_soul(thread_id)
         
         
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
         
-        async for chunk in graph.astream({"messages": message,"current_date": get_current_date(), "skills_description": skills},stream_mode="updates", config=config ):
+        async for chunk in graph.astream({"messages": message,"current_date": get_current_date(), "skills_description": skills, "soul": soul},stream_mode="updates", config=config ):
             yield chunk
 
 
@@ -90,9 +91,12 @@ async def invoke_workflow(prompt: str, thread_id: str = "default"):
     """
     graph = create_research_brief_workflow()
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+    
+    skills = await get_skills_description()
+    soul = await get_thread_soul(thread_id)
    
     output = graph.invoke(
-       {"messages": prompt,"current_date": get_current_date(), "skills_description": await get_skills_description()},
+       {"messages": prompt,"current_date": get_current_date(), "skills_description": skills, "soul": soul},
         config=config
     )
     if output and 'messages' in output:
@@ -244,6 +248,35 @@ async def get_threads():
             
     except Exception as e:
         raise Exception(f"Failed to fetch threads: {str(e)}")
+
+
+async def get_thread_soul(thread_id: str) -> str:
+    """
+    Get the soul for a specific thread from the database.
+    
+    Args:
+        thread_id: The thread ID to look up
+        
+    Returns:
+        The soul string for the thread, or None if not found
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    
+    if not connection_string:
+        return None
+    
+    try:
+        conn = await asyncpg.connect(connection_string)
+        try:
+            row = await conn.fetchrow(
+                'SELECT soul FROM threads WHERE thread_id = $1',
+                thread_id
+            )
+            return row['soul'] if row else None
+        finally:
+            await conn.close()
+    except Exception:
+        return None
     
     
 def get_thread(thread_id):

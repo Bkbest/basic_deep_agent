@@ -62,7 +62,7 @@ async def llm_with_tools(state: State, runtime: Runtime):
     # Create the prompt template with system prompt and messages
     agent_description = AGENT_DESCRIPTION
     prompt = PromptTemplate.from_template(agent_description)
-    system_message = [SystemMessage(content=prompt.format(current_date=state["current_date"], skills_description=state["skills_description"]))]
+    system_message = [SystemMessage(content=prompt.format(current_date=state["current_date"], skills_description=state["skills_description"], soul=state["soul"]))]
     
     #add systemmessage to the beginning of the messages to be summarized so that it is included in the summary.
     state["messages"] = system_message + state["messages"]
