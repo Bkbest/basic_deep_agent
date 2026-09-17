@@ -71,7 +71,7 @@ async def llm_with_tools(state: State, runtime: Runtime):
         state["messages"],
         running_summary=state.get("summary"),
         model=llm,
-        max_tokens=130000,
+        max_tokens=230000,
         max_tokens_before_summary=110000,
         max_summary_tokens=1000,
         initial_summary_prompt=DEFAULT_INITIAL_SUMMARY_PROMPT,
