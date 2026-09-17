@@ -73,7 +73,7 @@ async def llm_with_tools(state: State, runtime: Runtime):
         model=llm,
         max_tokens=230000,
         max_tokens_before_summary=110000,
-        max_summary_tokens=1000,
+        max_summary_tokens=10000,
         initial_summary_prompt=DEFAULT_INITIAL_SUMMARY_PROMPT,
         existing_summary_prompt=DEFAULT_EXISTING_SUMMARY_PROMPT,
     )
