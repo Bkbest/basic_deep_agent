@@ -253,7 +253,7 @@ async def create_test_user():
 
 
 from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread, create_thread
-from AI_Tools.document_processor import pdf_to_images
+from AI_Tools.document_processor import document_to_images
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # WebSocket connection cache: thread_id -> WebSocket
@@ -1320,11 +1320,14 @@ async def websocket_endpoint(websocket: WebSocket):
             async def run_workflow_background(workflow_thread_id: str, workflow_message: str, workflow_document: dict = None):
                 """Run workflow in background, continuing even if WebSocket connection is lost."""
                 try:
-                    # Process PDF document if provided
+                    # Process document if provided. The dispatcher routes
+                    # PDFs through pdf_to_images and TXT/MD/DOC/DOCX/code
+                    # files through text_to_images, so the same call works
+                    # for any supported upload.
                     doc_images = []
                     if workflow_document is not None:
                         try:
-                            doc_images = pdf_to_images(workflow_document)
+                            doc_images = document_to_images(workflow_document)
                             print(f"📄 Document processed into {len(doc_images)} page(s)")
                         except Exception as doc_error:
                             print(f"⚠️  Error processing document: {doc_error}")
