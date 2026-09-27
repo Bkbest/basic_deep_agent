@@ -254,6 +254,7 @@ async def create_test_user():
 
 from AI_Agent.basic_agent import invoke_workflow_stream, get_threads, get_thread, create_thread
 from AI_Tools.document_processor import document_to_images
+from AI_Tools.audio_processor import audio_to_text
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # WebSocket connection cache: thread_id -> WebSocket
@@ -1274,6 +1275,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 user_message = message_data.get("message", "")
                 image = message_data.get("image", None)  # Optional image data for future use
                 document = message_data.get("document", None)  # Optional document data for future use
+                audio = message_data.get("audio", None)  # Optional audio data, transcribed into user_message
                 # ```json
                 # {
                 # "thread_id": "...",
@@ -1287,9 +1289,25 @@ async def websocket_endpoint(websocket: WebSocket):
                 #     "filename": "report.pdf",
                 #     "mime_type": "application/pdf",
                 #     "data": "<base64 string, no data: prefix>"
+                # },
+                # "audio": {
+                #     "filename": "recording.webm",
+                #     "mime_type": "audio/webm;codecs=opus",
+                #     "data": "<base64 string, no data: prefix>"
                 # }
                 # }```
-                
+
+                # If audio is provided, transcribe it and use as user_message
+                # (audio overrides any text in the "message" field)
+                if audio:
+                    try:
+                        transcribed = audio_to_text(audio)
+                        if transcribed:
+                            user_message = transcribed
+                            print(f"🎤 Audio transcribed: {transcribed[:80]}...")
+                    except Exception as audio_err:
+                        print(f"⚠️  Audio transcription error: {audio_err}")
+
                 # Check if this is a reconnect message for an existing thread
                 if user_message == "reconnect":
                     # Just update the websocket in the cache without running workflow

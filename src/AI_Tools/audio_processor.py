@@ -101,8 +101,7 @@ def audio_to_text(audio: Dict[str, Any]) -> str:
 
 
 # Override by setting PIPER_MODEL=/abs/path/to/<voice>.onnx before running.
-_DEFAULT_PIPER_MODEL = os.getenv("PIPER_MODEL", "en_US-ryan-high.onnx")
-
+_DEFAULT_PIPER_MODEL = os.getenv("PIPER_MODEL", str(Path(__file__).parent / "en_US-ryan-high.onnx"))
 _PIPER_VOICE: Optional[PiperVoice] = None
 
 

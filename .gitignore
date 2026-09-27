@@ -164,6 +164,5 @@ uv.lock
 .langgraph_api/
 gcp-oauth.keys.json.json
 token.json
-onnx
-onnx.json
+*.onnx.json
 *.onnx
