@@ -4,6 +4,8 @@ websockets
 python-multipart
 asyncpg
 langchain
+faster-whisper
+piper-tts
 langchain-ollama
 langgraph>=1.1.3
 tavily-python
