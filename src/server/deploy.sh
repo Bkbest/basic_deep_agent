@@ -27,14 +27,10 @@ python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install -r "$APP_DIR/requirements.txt"
 "$VENV_DIR/bin/pip" install -e "$APP_DIR/../../"
 
-# Pre-fetch the Piper voice into the user's default voice cache so the
-# service has the .onnx + .onnx.json locally and boots offline.
+# Pre-fetch the Piper voice into the project's src/AI_Tools/ directory so
+# the service has the .onnx + .onnx.json locally and boots offline.
 # Runs only if the voice name (not a path) is given.
-if [[ -z "${PIPER_VOICE_PRESEEDED:-}" && "${PIPER_MODEL:-}" != */* ]]; then
-  echo "Fetching Piper voice: ${PIPER_MODEL}"
-  "$VENV_DIR/bin/python" -m piper.download_voices "${PIPER_MODEL}" || \
-    echo "WARN: piper.download_voices failed; set PIPER_MODEL to an existing .onnx path."
-fi
+"$VENV_DIR/bin/python" -m piper.download_voices en_US-ryan-high --download-dir "$APP_DIR/src/AI_Tools"
 
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
