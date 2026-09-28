@@ -30,7 +30,7 @@ python3 -m venv "$VENV_DIR"
 # Pre-fetch the Piper voice into the project's src/AI_Tools/ directory so
 # the service has the .onnx + .onnx.json locally and boots offline.
 # Runs only if the voice name (not a path) is given.
-"$VENV_DIR/bin/python" -m piper.download_voices en_US-ryan-high --download-dir "$APP_DIR/src/AI_Tools"
+"$VENV_DIR/bin/python" -m piper.download_voices en_US-ryan-high --download-dir "$APP_DIR/../src/AI_Tools"
 
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
