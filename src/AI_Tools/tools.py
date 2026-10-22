@@ -2,7 +2,7 @@ from langchain_core.tools import tool, InjectedToolCallId
 from AI_State.state import Todo
 from langgraph.types import Command
 from langchain_core.messages import ToolMessage
-from typing_extensions import Annotated, Literal
+from typing_extensions import Annotated, Literal, Optional
 from AI_State.state import State
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_google_community import CalendarToolkit
@@ -41,20 +41,33 @@ api_resource = build_resouce_service(credentials=credentials)
 
 @tool
 def SEARCH_CALENDAR_EVENT(
-    query: str,
     min_datetime: str,
-    max_datetime: str
+    max_datetime: str,
+    query: Optional[str] = None,
 ):
-    """Search for calendar events by query and datetime range.this is the date formate '%Y-%m-%d %H:%M:%S' """
+    """Search for calendar events within a datetime range.
+
+    Args:
+        min_datetime: Start of the search window, format '%Y-%m-%d %H:%M:%S'.
+        max_datetime: End of the search window, format '%Y-%m-%d %H:%M:%S'.
+        query: Optional free-text filter matched against summary, description,
+            location, attendee and organizer names/emails. Omit it to list all
+            events in the datetime range.
+
+    Returns:
+        A list of event dictionaries found in the given datetime range.
+    """
     event = CalendarSearchEvents(api_resource=api_resource)
-    return event.invoke({
-        "query": query,
+    payload = {
         "min_datetime": min_datetime,
         "max_datetime": max_datetime,
         "calendars_info": json.dumps([
             {"id": "aravindbk21@gmail.com", "summary": "aravindbk21@gmail.com", "timeZone": "Asia/Kolkata"}
         ])
-    })
+    }
+    if query:
+        payload["query"] = query
+    return event.invoke(payload)
 
 @tool(description=WRITE_TODOS_DESCRIPTION,parse_docstring=True)
 def write_todos(
