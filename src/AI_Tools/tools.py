@@ -40,14 +40,14 @@ credentials = get_google_credentials(
 api_resource = build_resouce_service(credentials=credentials)
 
 @tool
-async def SEARCH_CALENDAR_EVENT(
+def SEARCH_CALENDAR_EVENT(
     query: str,
     min_datetime: str,
     max_datetime: str
 ):
     """Search for calendar events by query and datetime range.this is the date formate '%Y-%m-%d %H:%M:%S' """
     event = CalendarSearchEvents(api_resource=api_resource)
-    return event.ainvoke({
+    return event.invoke({
         "query": query,
         "min_datetime": min_datetime,
         "max_datetime": max_datetime,
