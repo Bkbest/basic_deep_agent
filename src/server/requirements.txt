@@ -3,6 +3,7 @@ uvicorn[standard]
 websockets
 python-multipart
 asyncpg
+croniter
 langchain
 faster-whisper
 piper-tts

@@ -1,6 +1,7 @@
 import asyncio
 import sys
 
+from croniter import croniter
 from langgraph.graph import START, StateGraph
 from AI_Nodes.nodes import is_tool_required, llm_with_tools
 from AI_State.state import State
@@ -16,7 +17,7 @@ import os
 from dotenv import load_dotenv
 import asyncpg
 from langgraph.types import RetryPolicy
-from datetime import datetime
+from datetime import datetime, timezone
 
 load_dotenv()
 
@@ -277,10 +278,376 @@ async def get_thread_soul(thread_id: str) -> str:
             await conn.close()
     except Exception:
         return None
-    
-    
+
+
+# ---------------------------------------------------------------------------
+# Cron job persistence
+# ---------------------------------------------------------------------------
+
+CRON_TABLE = "crons"
+
+
+def _to_iso_z(value) -> str:
+    """Return a UTC ISO-8601 string with a `Z` suffix (or None)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _cron_row_to_dict(row) -> dict:
+    """Map a crons table row to the public cron payload."""
+    return {
+        "cron_id": row["cron_id"],
+        "name": row["name"],
+        "thread_id": row["thread_id"],
+        "prompt": row["prompt"],
+        "schedule": row["schedule"],
+        "is_active": row["is_active"],
+        "created_at": _to_iso_z(row["created_at"]),
+        "next_run_at": _to_iso_z(row["next_run_at"]),
+        "last_run_at": _to_iso_z(row["last_run_at"]),
+    }
+
+
+async def ensure_crons_table(conn) -> None:
+    """Create the crons table if it does not already exist."""
+    await conn.execute(
+        f'''
+        CREATE TABLE IF NOT EXISTS {CRON_TABLE} (
+            cron_id     VARCHAR(255) PRIMARY KEY,
+            name        VARCHAR(255) NOT NULL UNIQUE,
+            thread_id   VARCHAR(255) NOT NULL,
+            prompt      TEXT NOT NULL,
+            schedule    VARCHAR(255) NOT NULL,
+            is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            next_run_at TIMESTAMPTZ,
+            last_run_at TIMESTAMPTZ
+        )
+        '''
+    )
+    # Upgrade older databases in place so a reboot needs no manual migration.
+    await conn.execute(
+        f'ALTER TABLE {CRON_TABLE} ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ'
+    )
+
+
+async def save_cron(
+    name: str,
+    prompt: str,
+    schedule: str,
+    thread_id: str,
+    is_active: bool = True,
+) -> dict:
+    """
+    Create (or update) a cron job and return the stored record.
+
+    Args:
+        name: Human readable cron name, e.g. "Daily Tech Digest".
+        prompt: Prompt sent to the agent on every run.
+        schedule: Standard 5-field cron expression, e.g. "0 9 * * *".
+        thread_id: Thread supplied by the UI (required). It is also used as the
+            cron_id, so the cron and its thread always stay aligned.
+        is_active: Whether the cron should be scheduled.
+
+    Returns:
+        dict: The saved cron, including cron_id, thread_id and next_run_at.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    if not name or not str(name).strip():
+        raise ValueError("name is required")
+    if not prompt or not str(prompt).strip():
+        raise ValueError("prompt is required")
+    if not schedule or not croniter.is_valid(str(schedule).strip()):
+        raise ValueError(f"invalid cron schedule: {schedule!r}")
+    if not thread_id or not str(thread_id).strip():
+        raise ValueError("thread_id is required")
+
+    name = str(name).strip()
+    prompt = str(prompt)
+    schedule = str(schedule).strip()
+    thread_id = str(thread_id).strip()
+
+    # Compute the next run time in UTC
+    now = datetime.now(timezone.utc)
+    next_run_at = croniter(schedule, now).get_next(datetime) if is_active else None
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+
+        # Upsert on name so re-saving a cron keeps its cron_id stable.
+        existing = await conn.fetchrow(
+            f'SELECT cron_id FROM {CRON_TABLE} WHERE name = $1',
+            name
+        )
+        cron_id = existing["cron_id"] if existing else thread_id
+
+        row = await conn.fetchrow(
+            f'''
+            INSERT INTO {CRON_TABLE}
+                (cron_id, name, thread_id, prompt, schedule, is_active, next_run_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (name) DO UPDATE SET
+                thread_id   = EXCLUDED.thread_id,
+                prompt      = EXCLUDED.prompt,
+                schedule    = EXCLUDED.schedule,
+                is_active   = EXCLUDED.is_active,
+                next_run_at = EXCLUDED.next_run_at
+            RETURNING *
+            ''',
+            cron_id, name, thread_id, prompt, schedule, is_active, next_run_at
+        )
+
+        # Ensure the thread used for checkpoints exists
+        try:
+            await create_thread(row["thread_id"])
+        except Exception as e:
+            print(f"Warning: could not create thread for cron {row['thread_id']}: {e}")
+
+        return _cron_row_to_dict(row)
+    finally:
+        await conn.close()
+
+
+async def get_crons(active_only: bool = False) -> list:
+    """
+    Fetch all cron jobs.
+
+    Args:
+        active_only: When True, only active crons are returned.
+
+    Returns:
+        list: Cron payloads ordered by creation time (newest first).
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+
+        query = f'SELECT * FROM {CRON_TABLE}'
+        if active_only:
+            query += ' WHERE is_active = TRUE'
+        query += ' ORDER BY created_at DESC'
+
+        rows = await conn.fetch(query)
+        return [_cron_row_to_dict(row) for row in rows]
+    finally:
+        await conn.close()
+
+
+async def get_cron(cron_id: str) -> dict:
+    """Fetch a single cron by cron_id (or thread_id), or None if not found."""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+        row = await conn.fetchrow(
+            f'SELECT * FROM {CRON_TABLE} WHERE cron_id = $1 OR thread_id = $1',
+            cron_id
+        )
+        return _cron_row_to_dict(row) if row else None
+    finally:
+        await conn.close()
+
+
+async def delete_cron(cron_id: str) -> bool:
+    """Delete a cron by cron_id (or thread_id). Returns True if a row was removed."""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+        result = await conn.execute(
+            f'DELETE FROM {CRON_TABLE} WHERE cron_id = $1 OR thread_id = $1',
+            cron_id
+        )
+        return result.endswith(" 1")
+    finally:
+        await conn.close()
+
+
+async def set_cron_active(cron_id: str, is_active: bool) -> dict:
+    """Enable or disable a cron and recompute next_run_at. Returns the updated cron."""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+
+        row = await conn.fetchrow(
+            f'SELECT * FROM {CRON_TABLE} WHERE cron_id = $1 OR thread_id = $1',
+            cron_id
+        )
+        if not row:
+            return None
+
+        next_run_at = None
+        if is_active:
+            now = datetime.now(timezone.utc)
+            next_run_at = croniter(row["schedule"], now).get_next(datetime)
+
+        updated = await conn.fetchrow(
+            f'''
+            UPDATE {CRON_TABLE}
+               SET is_active = $2, next_run_at = $3
+             WHERE cron_id = $1
+            RETURNING *
+            ''',
+            row["cron_id"], is_active, next_run_at
+        )
+        return _cron_row_to_dict(updated)
+    finally:
+        await conn.close()
+
+
+async def ensure_crons_table_exists() -> None:
+    """Create the crons table (standalone connection, for app startup)."""
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+    finally:
+        await conn.close()
+
+
+def _next_occurrence(schedule: str, after: datetime) -> datetime:
+    """Return the next UTC run time strictly after `after`."""
+    return croniter(schedule, after).get_next(datetime)
+
+
+async def claim_due_crons(limit: int = 50) -> list:
+    """
+    Atomically claim crons that are due and advance their schedule.
+
+    Claiming happens *before* the workflow runs and is committed immediately.
+    That gives at-most-once semantics: if the server dies mid-run, the claimed
+    occurrence is never re-fired on restart (missed runs are skipped).
+
+    Args:
+        limit: Maximum number of crons to claim in one tick.
+
+    Returns:
+        list: Claimed cron payloads, including the advanced `next_run_at`.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+
+        async with conn.transaction():
+            rows = await conn.fetch(
+                f'''
+                SELECT * FROM {CRON_TABLE}
+                 WHERE is_active = TRUE
+                   AND next_run_at IS NOT NULL
+                   AND next_run_at <= $1
+                 ORDER BY next_run_at
+                 LIMIT $2
+                 FOR UPDATE SKIP LOCKED
+                ''',
+                datetime.now(timezone.utc), limit
+            )
+
+            claimed = []
+            for row in rows:
+                try:
+                    next_run_at = _next_occurrence(row["schedule"], datetime.now(timezone.utc))
+                except Exception as e:
+                    print(f"⚠️  Cron {row['cron_id']} has an invalid schedule {row['schedule']!r}: {e}")
+                    continue
+
+                updated = await conn.fetchrow(
+                    f'''
+                    UPDATE {CRON_TABLE}
+                       SET last_run_at = $2, next_run_at = $3
+                     WHERE cron_id = $1
+                    RETURNING *
+                    ''',
+                    row["cron_id"], datetime.now(timezone.utc), next_run_at
+                )
+                claimed.append(_cron_row_to_dict(updated))
+
+            return claimed
+    finally:
+        await conn.close()
+
+
+async def recompute_cron_next_runs() -> int:
+    """
+    Reconcile `next_run_at` with the stored schedules (called on startup).
+
+    Missed runs are intentionally skipped: any cron whose `next_run_at` is
+    NULL or in the past is moved forward to its next future occurrence instead
+    of being fired. Inactive crons have `next_run_at` cleared.
+
+    Returns:
+        int: Number of rows adjusted.
+    """
+    connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
+    if not connection_string:
+        raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
+
+    conn = await asyncpg.connect(connection_string)
+    try:
+        await ensure_crons_table(conn)
+        now = datetime.now(timezone.utc)
+
+        rows = await conn.fetch(f'SELECT cron_id, schedule, is_active, next_run_at FROM {CRON_TABLE}')
+        adjusted = 0
+
+        for row in rows:
+            if not row["is_active"]:
+                if row["next_run_at"] is not None:
+                    await conn.execute(
+                        f'UPDATE {CRON_TABLE} SET next_run_at = NULL WHERE cron_id = $1',
+                        row["cron_id"]
+                    )
+                    adjusted += 1
+                continue
+
+            if row["next_run_at"] is not None and row["next_run_at"] > now:
+                continue
+
+            try:
+                next_run_at = _next_occurrence(row["schedule"], now)
+            except Exception as e:
+                print(f"⚠️  Cron {row['cron_id']} has an invalid schedule {row['schedule']!r}: {e}")
+                continue
+
+            await conn.execute(
+                f'UPDATE {CRON_TABLE} SET next_run_at = $2 WHERE cron_id = $1',
+                row["cron_id"], next_run_at
+            )
+            adjusted += 1
+
+        return adjusted
+    finally:
+        await conn.close()
+
+
 def get_thread(thread_id):
-    
     """
     Get a specific thread by thread_id
     """
