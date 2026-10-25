@@ -19,6 +19,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "asyncpg>=0.29.0",
     "psycopg[binary]>=3.1.0",
+    "langsmith>=0.14.9",
     "croniter>=2.0.0",
     "PyMuPDF>=1.23.0",
     "Pillow>=10.0.0",
