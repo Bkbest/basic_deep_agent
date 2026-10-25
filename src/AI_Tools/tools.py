@@ -3,7 +3,6 @@ from AI_State.state import Todo
 from langgraph.types import Command
 from langchain_core.messages import ToolMessage
 from typing_extensions import Annotated, Literal, Optional
-from AI_State.state import State
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_google_community import CalendarToolkit
 from AI_Sys_Prompt.system_prompt_agent import (
@@ -92,7 +91,7 @@ def write_todos(
     
 @tool(parse_docstring=True)
 def read_todos(
-    state: Annotated[State, InjectedState],
+    state: Annotated[dict, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> str:
     """Read the current TODO list from the agent state.
