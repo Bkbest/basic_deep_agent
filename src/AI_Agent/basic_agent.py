@@ -8,6 +8,7 @@ from AI_Nodes.nodes import (
     llm_with_tools,
     llm_is_task_complete,
     route_after_completion_check,
+    seed_standing_todos,
 )
 from AI_State.state import State
 from langgraph.prebuilt.tool_node import (
@@ -36,9 +37,13 @@ def create_research_brief_workflow():
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("tool_node", ToolNode(all_tools))
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
+    workflow.add_node("seed_todos", seed_standing_todos)
 
     # Add edges
-    workflow.add_edge(START, "llm_with_tools")
+    # Seeding runs once per human turn, so the standing todos are not reset
+    # again on each tool round.
+    workflow.add_edge(START, "seed_todos")
+    workflow.add_edge("seed_todos", "llm_with_tools")
     workflow.add_conditional_edges("llm_with_tools", is_tool_required)
     workflow.add_edge("tool_node", "llm_with_tools")
     workflow.add_conditional_edges("llm_is_task_complete", route_after_completion_check)
@@ -58,9 +63,11 @@ async def invoke_workflow_stream(thread_id, message):
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("tool_node", ToolNode(all_tools))
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
+    workflow.add_node("seed_todos", seed_standing_todos)
 
     # Add edges
-    workflow.add_edge(START, "llm_with_tools")
+    workflow.add_edge(START, "seed_todos")
+    workflow.add_edge("seed_todos", "llm_with_tools")
     workflow.add_conditional_edges("llm_with_tools", is_tool_required)
     workflow.add_edge("tool_node", "llm_with_tools")
     workflow.add_conditional_edges("llm_is_task_complete", route_after_completion_check)

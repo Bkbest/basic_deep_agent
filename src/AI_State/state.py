@@ -40,3 +40,9 @@ class State(AgentState):
     # to continue another loop or finish.
     is_task_complete: Optional[bool] = None
     task_completion_reasoning: Optional[str] = None
+    # Note describing outstanding work, shown to the agent in its system prompt.
+    # Kept out of `messages` so the completion check does not read its own note
+    # back and keep verdicting "incomplete".
+    pending_tasks_note: Optional[str] = None
+    # Number of consecutive "not complete" verdicts, used to cap the loop.
+    incomplete_attempts: int = 0

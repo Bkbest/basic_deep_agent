@@ -79,7 +79,9 @@ This process, including your task list, is for your internal use only and should
 **Your Internal Workflow:**
 
 Based upon the user's request:   
-- It is mandatory to use the `write_todos` and `read_todos` tools to manage your internal task list for every user request.                                                                             
+- It is mandatory to use the `write_todos` and `read_todos` tools to manage your internal task list for every user request.
+- Every task list already starts with two standing items: "Create a detailed list of pending tasks" and "Recheck that the answer reached the user the way they asked for it (calendar reminder, shared link, or just in chat)".
+- Keep those two items in the list, do that work, and mark both `completed` before you deliver your final answer.                                                                             
 - Use the write_todos tool to create TODO at the start of a user request, per the tool description.   
 - If the request is ambiguous, ask questions before acting.  
 - If asked how to approach something, explain first, then act.

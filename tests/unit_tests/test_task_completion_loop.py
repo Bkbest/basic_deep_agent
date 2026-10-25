@@ -187,6 +187,141 @@ def test_format_conversation_skips_empty_and_notes_tool_calls():
 
 
 # ---------------------------------------------------------------------------
+# Standing todos
+# ---------------------------------------------------------------------------
+
+
+def test_seed_standing_todos_on_empty_list():
+    seeded = nodes._seed_standing_todos([])
+    assert len(seeded) == 2
+    assert [t["content"] for t in seeded] == list(nodes.STANDING_TODOS)
+    assert all(t["status"] == "pending" for t in seeded)
+
+
+def test_seed_standing_todos_keeps_agent_todos_after():
+    existing = [{"content": "Research pricing", "status": "in_progress"}]
+    seeded = nodes._seed_standing_todos(existing)
+
+    assert [t["content"] for t in seeded[:2]] == list(nodes.STANDING_TODOS)
+    assert seeded[2] == {"content": "Research pricing", "status": "in_progress"}
+
+
+def test_seed_standing_todos_is_idempotent():
+    once = nodes._seed_standing_todos([])
+    twice = nodes._seed_standing_todos(once)
+
+    assert len(twice) == 2, "re-seeding must not duplicate the standing todos"
+    assert [t["content"] for t in twice] == list(nodes.STANDING_TODOS)
+
+
+def test_seed_standing_todos_does_not_mutate_input():
+    existing = [{"content": "Research pricing", "status": "completed"}]
+    nodes._seed_standing_todos(existing)
+
+    assert existing == [{"content": "Research pricing", "status": "completed"}]
+
+
+async def test_seed_node_returns_todos():
+    out = await nodes.seed_standing_todos({"todos": []})
+
+    assert len(out["todos"]) == 2
+    assert all(t["status"] == "pending" for t in out["todos"])
+
+
+# ---------------------------------------------------------------------------
+# Pending-task AI message
+# ---------------------------------------------------------------------------
+
+
+async def test_incomplete_verdict_sets_note_not_message(monkeypatch):
+    monkeypatch.setattr(nodes, "llm_task_completion", FakeStructured([False]))
+    out = await nodes.llm_is_task_complete(_PARTIAL_STATE)
+
+    assert out["is_task_complete"] is False
+    # The note must NOT go into messages: doing so made the check read its own
+    # note back and verdict "incomplete" forever.
+    assert "messages" not in out
+    assert out["pending_tasks_note"] == "stub verdict"
+    assert out["incomplete_attempts"] == 1
+
+
+async def test_complete_verdict_clears_note(monkeypatch):
+    monkeypatch.setattr(nodes, "llm_task_completion", FakeStructured([True]))
+    out = await nodes.llm_is_task_complete(_PARTIAL_STATE)
+
+    assert out["is_task_complete"] is True
+    assert "messages" not in out
+    assert out["pending_tasks_note"] is None
+    assert out["incomplete_attempts"] == 0
+
+
+async def test_incomplete_attempts_accumulate(monkeypatch):
+    monkeypatch.setattr(nodes, "llm_task_completion", FakeStructured([False]))
+    state = dict(_PARTIAL_STATE, incomplete_attempts=2)
+
+    out = await nodes.llm_is_task_complete(state)
+
+    assert out["incomplete_attempts"] == 3
+
+
+async def test_pending_message_falls_back_to_todo_list():
+    """With no reasoning, the note lists the outstanding todos."""
+    message = nodes._pending_todos_message(
+        nodes._pending_todos(_PARTIAL_STATE["todos"])
+    )
+
+    assert "Write summary" in message
+    assert "in_progress" in message
+
+
+async def test_router_caps_the_loop():
+    """After MAX_INCOMPLETE_ATTEMPTS the router ends instead of looping."""
+    limit = nodes.MAX_INCOMPLETE_ATTEMPTS
+
+    assert nodes.route_after_completion_check(
+        {"is_task_complete": False, "incomplete_attempts": limit}
+    ) == END
+    assert nodes.route_after_completion_check(
+        {"is_task_complete": False, "incomplete_attempts": limit - 1}
+    ) == "llm_with_tools"
+
+
+async def test_complete_verdict_adds_no_message(monkeypatch):
+    monkeypatch.setattr(nodes, "llm_task_completion", FakeStructured([True]))
+    out = await nodes.llm_is_task_complete(_PARTIAL_STATE)
+
+    assert out["is_task_complete"] is True
+    assert "messages" not in out
+
+
+async def test_incomplete_without_pending_todos_adds_no_note(monkeypatch):
+    """Nothing to report if every todo is done but the answer was not delivered."""
+    monkeypatch.setattr(nodes, "llm_task_completion", FakeStructured([False]))
+    state = {
+        "messages": [HumanMessage(content="Do it")],
+        "todos": [{"content": "Step 1", "status": "completed"}],
+    }
+    out = await nodes.llm_is_task_complete(state)
+
+    assert out["is_task_complete"] is False
+    assert "messages" not in out
+    assert "pending_tasks_note" not in out
+
+
+async def test_failure_path_also_sets_note(monkeypatch):
+    class Boom:
+        async def ainvoke(self, prompt):
+            raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(nodes, "llm_task_completion", Boom())
+    out = await nodes.llm_is_task_complete(_PARTIAL_STATE)
+
+    assert out["is_task_complete"] is False
+    assert "messages" not in out
+    assert "Write summary" in out["pending_tasks_note"]
+
+
+# ---------------------------------------------------------------------------
 # Full loop topology
 # ---------------------------------------------------------------------------
 
@@ -303,6 +438,19 @@ async def _run_standalone() -> int:
         ("llm failure keeps working", test_llm_failure_keeps_working),
         ("no todos -> judge conversation", test_no_todos_judged_from_conversation),
         ("format_conversation", test_format_conversation_skips_empty_and_notes_tool_calls),
+        ("seed standing todos (empty)", test_seed_standing_todos_on_empty_list),
+        ("seed keeps agent todos", test_seed_standing_todos_keeps_agent_todos_after),
+        ("seed is idempotent", test_seed_standing_todos_is_idempotent),
+        ("seed does not mutate input", test_seed_standing_todos_does_not_mutate_input),
+        ("seed node returns todos", test_seed_node_returns_todos),
+        ("incomplete sets note", test_incomplete_verdict_sets_note_not_message),
+        ("complete clears note", test_complete_verdict_clears_note),
+        ("attempts accumulate", test_incomplete_attempts_accumulate),
+        ("router caps the loop", test_router_caps_the_loop),
+        ("fallback lists todos", test_pending_message_falls_back_to_todo_list),
+        ("complete adds no message", test_complete_verdict_adds_no_message),
+        ("incomplete w/o pending todos", test_incomplete_without_pending_todos_adds_no_note),
+        ("failure sets note", test_failure_path_also_sets_note),
         ("loop repeats until complete", test_loop_repeats_until_complete),
         ("completes immediately", test_completes_immediately),
         ("tool path then completes", test_tool_call_path_returns_then_completes),
