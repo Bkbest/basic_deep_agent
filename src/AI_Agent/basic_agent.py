@@ -38,7 +38,7 @@ def create_research_brief_workflow():
 
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
-    workflow.add_node("tool_node", ToolNode(all_tools))
+    workflow.add_node("tool_node", ToolNode(all_tools),retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
     workflow.add_node("seed_todos", seed_standing_todos)
 
