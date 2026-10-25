@@ -21,11 +21,43 @@ from AI_LLM.agent_llm import MyLLM
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_google_community.calendar.search_events import CalendarSearchEvents
+import asyncio
 import json
 from langchain_google_community.calendar.utils import (
     build_resouce_service,
     get_google_credentials,
 )
+
+# Dice job-search MCP server. Public read-only tools, no authentication.
+DICE_MCP_URL_DEFAULT = "https://mcp.dice.com/mcp"
+DICE_HTTP_TIMEOUT_SECONDS = 20
+DICE_SSE_READ_TIMEOUT_SECONDS = 45
+
+# career-ops MCP server (LAN-only). Its scan/pipeline/evaluate tools drive
+# portal scraping and LLM evaluation, so they need a much longer read window
+# than a plain job lookup.
+CAREER_OPS_MCP_URL_DEFAULT = "http://192.168.68.111:8765/mcp"
+CAREER_OPS_HTTP_TIMEOUT_SECONDS = 20
+CAREER_OPS_SSE_READ_TIMEOUT_SECONDS = 180
+
+
+def _dedupe_tools(tools: list) -> list:
+    """Drop tools whose name is already taken, keeping the first one.
+
+    ``ToolNode`` looks tools up by name, so a duplicate silently shadows the
+    other definition instead of raising.
+    """
+    seen = set()
+    unique = []
+    for tool in tools:
+        name = getattr(tool, "name", None)
+        if name is not None and name in seen:
+            print(f"⚠️  Duplicate tool name '{name}' ignored, keeping the first definition")
+            continue
+        if name is not None:
+            seen.add(name)
+        unique.append(tool)
+    return unique
 
 # Load environment variables
 load_dotenv()
@@ -296,22 +328,74 @@ def think_tool(reflection: str) -> str:
 
 class MyTools:
     async def getAllTools(self):
-        client = MultiServerMCPClient(
-            {
-                "pandora_sandbox": {
-                    "transport": "streamable_http",
-                    "url": os.getenv("SANDBOX_URL"),
-                }
-            }
-        )
+        """Return every tool the agent can call.
+
+        MCP servers are loaded independently: if one is unreachable or slow,
+        its tools are dropped with a warning and the rest still load. That
+        matters because this method also runs at import time (see
+        ``AI_Nodes.nodes``), so a single dead endpoint must not break startup.
+        """
+        connections = {
+            "pandora_sandbox": {
+                "transport": "streamable_http",
+                "url": os.getenv("SANDBOX_URL"),
+            },
+            "dice": {
+                "transport": "streamable_http",
+                "url": os.getenv("DICE_MCP_URL", DICE_MCP_URL_DEFAULT),
+                # Adapter defaults are 30s/300s; those are too generous for a
+                # read-only job search and make outages look like hangs.
+                "timeout": DICE_HTTP_TIMEOUT_SECONDS,
+                "sse_read_timeout": DICE_SSE_READ_TIMEOUT_SECONDS,
+            },
+            "career_ops": {
+                "transport": "streamable_http",
+                "url": os.getenv("CAREER_OPS_MCP_URL", CAREER_OPS_MCP_URL_DEFAULT),
+                # scan/pipeline/evaluate can run for a while, so allow a long
+                # read window while keeping connection setup short.
+                "timeout": CAREER_OPS_HTTP_TIMEOUT_SECONDS,
+                "sse_read_timeout": CAREER_OPS_SSE_READ_TIMEOUT_SECONDS,
+            },
+        }
+
         toolkit = CalendarToolkit(api_resource=api_resource)
         tools = toolkit.get_tools()
         # Filter calendar tools efficiently in one pass
         calendar_tool_names = ["get_current_datetime", "delete_calendar_event", "create_calendar_event", "get_calendars_info", "update_calendar_event"]
         filtered_calendar_tools = [tool for tool in tools if tool.name in calendar_tool_names]
-        mcp_tools = await client.get_tools()
-        return [write_todos,read_todos,think_tool,internet_search,list_skills,read_skill,save_skill,SEARCH_CALENDAR_EVENT] + mcp_tools + filtered_calendar_tools
-    
+
+        mcp_tools = await self._load_mcp_tools(connections)
+        local_tools = [write_todos,read_todos,think_tool,internet_search,list_skills,read_skill,save_skill,SEARCH_CALENDAR_EVENT]
+        # Guard the whole set: ToolNode resolves tools by name, so a clash
+        # would silently shadow one definition.
+        return _dedupe_tools(local_tools + mcp_tools + filtered_calendar_tools)
+
+    @staticmethod
+    async def _load_mcp_tools(connections: dict) -> list:
+        """Load tools from every MCP server, skipping servers that fail."""
+        client = MultiServerMCPClient(connections)
+
+        async def load_one(server_name: str) -> list:
+            try:
+                return await client.get_tools(server_name=server_name)
+            except Exception as e:
+                print(f"⚠️  MCP server '{server_name}' unavailable, its tools are skipped: {e}")
+                return []
+
+        results = await asyncio.gather(
+            *(load_one(name) for name in connections), return_exceptions=True
+        )
+
+        loaded = []
+        for server_name, result in zip(connections, results):
+            if isinstance(result, BaseException):
+                # load_one already handles exceptions, so this only catches
+                # failures raised outside its try block.
+                print(f"⚠️  MCP server '{server_name}' failed: {result}")
+                continue
+            loaded.extend(result)
+        return loaded
+
     def getToolsSync(self):
         """Synchronous wrapper for getAllTools"""
         import asyncio

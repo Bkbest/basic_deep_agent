@@ -62,7 +62,8 @@ UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 sudo tee "$UNIT_PATH" >/dev/null <<EOF
 [Unit]
 Description=research-agent FastAPI Server
-After=network.target
+After=network.target pandora-sandbox-mcp.service careerops-server.service
+
 
 [Service]
 Type=simple

@@ -31,6 +31,21 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _tool_error_message(error: Exception) -> str:
+    """Turn a tool failure into a ToolMessage the model can recover from.
+
+    Without this, ``ToolNode`` re-raises and a single transient MCP timeout
+    (e.g. ``httpcore.ReadTimeout`` from a streamable-HTTP server) aborts the
+    whole agent run instead of letting the model try another approach.
+    """
+    detail = str(error).strip() or type(error).__name__
+    return (
+        f"Tool call failed: {detail}\n"
+        "This may be a temporary network or service problem. "
+        "Retry the call, or continue with a different approach."
+    )
+
+
 def create_research_brief_workflow():
     # Create the workflow graph
     workflow = StateGraph(state_schema=State)
@@ -38,7 +53,11 @@ def create_research_brief_workflow():
 
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
-    workflow.add_node("tool_node", ToolNode(all_tools),retry_policy=RetryPolicy(max_attempts=3))
+    workflow.add_node(
+        "tool_node",
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message),
+        retry_policy=RetryPolicy(max_attempts=3),
+    )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
     workflow.add_node("seed_todos", seed_standing_todos)
 
@@ -64,7 +83,11 @@ async def invoke_workflow_stream(thread_id, message):
     all_tools = await MyTools().getAllTools()
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
-    workflow.add_node("tool_node", ToolNode(all_tools),retry_policy=RetryPolicy(max_attempts=3))
+    workflow.add_node(
+        "tool_node",
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message),
+        retry_policy=RetryPolicy(max_attempts=3),
+    )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
     workflow.add_node("seed_todos", seed_standing_todos)
 

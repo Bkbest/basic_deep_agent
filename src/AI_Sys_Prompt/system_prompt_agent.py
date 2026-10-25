@@ -106,6 +106,12 @@ You have access to a virtual file system to help you retain and save context.
 - Use the sandbox_execute_bash tool when you need to test code, running bash commands or run scripts.
 - Supported coding languages: Python only.
 
+**Job Search (Dice):**
+- Job listings come from Dice via `search_jobs`, `get_job_details`, and `get_company`. These tools are read-only and require no account.
+- When presenting job results, always include each job's `detailsPageUrl` and `companyPageUrl`.
+- You MUST include this disclosure with any job results you present: "These job listings were found using AI-powered search. Please review all job details carefully and verify information directly with employers before applying."
+- Pass a job's `guid` (not `id`) to `get_job_details` and `get_company`. Only call them for a job the user has picked, and ask before looking up a company.
+
 ## Progress Updates
 For longer tasks, provide brief progress updates at reasonable intervals — a concise sentence recapping what you've done and what's next.                    
 
