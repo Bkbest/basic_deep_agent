@@ -99,7 +99,7 @@ async def invoke_workflow_stream(thread_id, message):
         soul = await get_thread_soul(thread_id)
         
         
-        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 1000}
         
         async for chunk in graph.astream({"messages": message,"current_date": get_current_date(), "skills_description": skills, "soul": soul},stream_mode="updates", config=config ):
             yield chunk
@@ -110,7 +110,7 @@ async def invoke_workflow(prompt: str, thread_id: str = "default"):
     Invoke the workflow with a prompt and return the full output.
     """
     graph = create_research_brief_workflow()
-    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 1000}
     
     skills = await get_skills_description()
     soul = await get_thread_soul(thread_id)
