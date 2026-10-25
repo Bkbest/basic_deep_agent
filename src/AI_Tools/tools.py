@@ -17,7 +17,6 @@ from datetime import datetime
 
 # Get project root directory
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-from AI_STRUCT_OUT.summary import Summary
 import asyncpg
 from AI_LLM.agent_llm import MyLLM
 from langchain_mcp_adapters.client import MultiServerMCPClient
