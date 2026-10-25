@@ -3,7 +3,12 @@ import sys
 
 from croniter import croniter
 from langgraph.graph import START, StateGraph
-from AI_Nodes.nodes import is_tool_required, llm_with_tools
+from AI_Nodes.nodes import (
+    is_tool_required,
+    llm_with_tools,
+    llm_is_task_complete,
+    route_after_completion_check,
+)
 from AI_State.state import State
 from langgraph.prebuilt.tool_node import (
     ToolNode
@@ -30,11 +35,13 @@ def create_research_brief_workflow():
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("tool_node", ToolNode(all_tools))
+    workflow.add_node("llm_is_task_complete", llm_is_task_complete)
 
     # Add edges
     workflow.add_edge(START, "llm_with_tools")
     workflow.add_conditional_edges("llm_with_tools", is_tool_required)
     workflow.add_edge("tool_node", "llm_with_tools")
+    workflow.add_conditional_edges("llm_is_task_complete", route_after_completion_check)
     
     graph = workflow.compile()
     
@@ -50,11 +57,13 @@ async def invoke_workflow_stream(thread_id, message):
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("tool_node", ToolNode(all_tools))
+    workflow.add_node("llm_is_task_complete", llm_is_task_complete)
 
     # Add edges
     workflow.add_edge(START, "llm_with_tools")
     workflow.add_conditional_edges("llm_with_tools", is_tool_required)
     workflow.add_edge("tool_node", "llm_with_tools")
+    workflow.add_conditional_edges("llm_is_task_complete", route_after_completion_check)
 
     connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
     

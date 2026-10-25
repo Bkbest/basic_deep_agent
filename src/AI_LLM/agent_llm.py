@@ -5,6 +5,7 @@ It uses the Ollama framework with the llama3.2:3b model.
 
 from langchain_ollama.chat_models import ChatOllama
 from AI_STRUCT_OUT.summary import Summary
+from AI_STRUCT_OUT.task_completion import TaskCompletion
 
 class MyLLM:
     """Custom LLM wrapper that provides access to both base LLM and LLM with tools."""
@@ -37,4 +38,16 @@ class MyLLM:
     
     def llm_for_web_search(self):
         return self.llm_for_web_search
+
+    def llm_for_task_completion(self):
+        """
+        Returns an LLM bound to the TaskCompletion schema.
+
+        Uses function calling because this model emits prose (not JSON) under
+        the default `json_schema`/`json_mode` strategies.
+
+        Returns:
+            Runnable: Structured-output LLM returning a TaskCompletion verdict.
+        """
+        return self.llm.with_structured_output(TaskCompletion, method="function_calling")
     

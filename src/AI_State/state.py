@@ -10,7 +10,7 @@ are handled through the appropriate reducer functions.
 from typing_extensions import Annotated
 from AI_Reducers.reducers import file_reducer
 from langchain.agents.middleware.types import AgentState
-from typing import TypedDict, Literal
+from typing import TypedDict, Literal, Optional
 from langmem.short_term import RunningSummary
 
 
@@ -36,3 +36,7 @@ class State(AgentState):
     current_date: str
     skills_description: str
     soul: str | None
+    # Set by the `llm_is_task_complete` node so the router can decide whether
+    # to continue another loop or finish.
+    is_task_complete: Optional[bool] = None
+    task_completion_reasoning: Optional[str] = None
