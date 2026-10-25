@@ -17,6 +17,31 @@ export PIPER_MODEL="${PIPER_MODEL:-en_US-ryan-high}"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$APP_DIR/.venv"
 
+# Repo-root .env, as an absolute path. systemd reads it directly via
+# EnvironmentFile= below, so secrets (LANGSMITH_API_KEY, POSTGRES_CONNECTION_STRING,
+# TAVILY_API_KEY) stay in the gitignored .env instead of being copied into
+# /etc/systemd/system/*.service, which is world-readable (0644).
+REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+  # The file holds credentials; keep it owner-only.
+  if [[ "$(stat -c '%a' "$ENV_FILE")" != "600" ]]; then
+    echo "Tightening $ENV_FILE to 600 (it contains secrets)."
+    chmod 600 "$ENV_FILE" || sudo chmod 600 "$ENV_FILE" || true
+  fi
+else
+  echo "Warning: $ENV_FILE not found; the service will start without .env values." >&2
+fi
+
+# Fail fast on the silent failure mode: with tracing on and no key, langsmith
+# does not error, it just fails every upload with HTTP 401 and the UI stays empty.
+if grep -qE '^LANGSMITH_TRACING=(true|True|TRUE|1|yes)$' "$ENV_FILE" 2>/dev/null \
+   && ! grep -qE '^LANGSMITH_API_KEY=.+' "$ENV_FILE" 2>/dev/null; then
+  echo "Warning: LANGSMITH_TRACING is enabled but LANGSMITH_API_KEY is empty in $ENV_FILE." >&2
+  echo "         Every trace upload will fail with HTTP 401; the LangSmith UI will stay empty." >&2
+fi
+
 if [[ "$(id -un)" != "$RUN_USER" ]]; then
   echo "Please run this script as user '$RUN_USER' (current: $(id -un))."
   exit 1
@@ -49,6 +74,10 @@ Environment="WHISPER_MODEL=${WHISPER_MODEL}"
 Environment="WHISPER_DEVICE=${WHISPER_DEVICE}"
 Environment="WHISPER_COMPUTE=${WHISPER_COMPUTE}"
 Environment="PIPER_MODEL=${PIPER_MODEL}"
+# LangSmith tracing config (LANGSMITH_TRACING, LANGSMITH_ENDPOINT,
+# LANGSMITH_API_KEY, LANGSMITH_AGENT_ID, LANGSMITH_AGENT_ENVIRONMENT) comes
+# from the repo-root .env. The leading '-' makes a missing file non-fatal.
+EnvironmentFile=-${ENV_FILE}
 ExecStart=${VENV_DIR}/bin/python websocket_server.py
 Restart=always
 RestartSec=2
