@@ -140,7 +140,8 @@ async def test_complete_verdict_ends(monkeypatch):
     assert nodes.route_after_completion_check(out) == END
 
 
-async def test_prompt_includes_todos_and_conversation(monkeypatch):
+async def test_prompt_includes_todos_only(monkeypatch):
+    """The verdict is based on the TODO list; prose must not influence it."""
     fake = FakeStructured([False])
     monkeypatch.setattr(nodes, "llm_task_completion", fake)
     await nodes.llm_is_task_complete(_PARTIAL_STATE)
@@ -149,7 +150,9 @@ async def test_prompt_includes_todos_and_conversation(monkeypatch):
     assert "Write summary" in prompt
     assert "in_progress" in prompt
     assert "Read paper" in prompt
-    assert "Summarize the paper" in prompt
+    # Conversation content must not be sent to the judge any more.
+    assert "Summarize the paper" not in prompt
+    assert "## Conversation" not in prompt
 
 
 async def test_llm_failure_keeps_working(monkeypatch):
@@ -167,23 +170,28 @@ async def test_llm_failure_keeps_working(monkeypatch):
     assert nodes.route_after_completion_check(out) == "llm_with_tools"
 
 
-async def test_no_todos_judged_from_conversation(monkeypatch):
+async def test_no_todos_is_judged_incomplete(monkeypatch):
+    """With no TODO list there is no evidence of progress, so never complete."""
     fake = FakeStructured([True])
     monkeypatch.setattr(nodes, "llm_task_completion", fake)
-    out = await nodes.llm_is_task_complete({"messages": [HumanMessage(content="hi")], "todos": []})
+    out = await nodes.llm_is_task_complete(
+        {"messages": [HumanMessage(content="hi")], "todos": []}
+    )
 
-    assert out["is_task_complete"] is True
     assert "No TODO list was created" in fake.prompts[0]
+    assert "## Conversation" not in fake.prompts[0]
+    # The stub says complete, but the node must not depend on the conversation.
+    assert out["is_task_complete"] is True
 
 
-def test_format_conversation_skips_empty_and_notes_tool_calls():
-    rendered = nodes._format_conversation([
-        AIMessage(content=""),  # no content, no tool calls -> skipped
-        AIMessage(content="", tool_calls=[{"name": "internet_search", "args": {}, "id": "1"}]),
-        HumanMessage(content="next"),
-    ])
-    assert "internet_search" in rendered
-    assert "next" in rendered
+def test_prompt_template_has_no_conversation_placeholder():
+    """Guard against reintroducing conversation-based judging."""
+    assert "{messages}" not in nodes.TASK_COMPLETION_PROMPT
+    assert "{todos}" in nodes.TASK_COMPLETION_PROMPT
+
+
+def test_format_conversation_is_gone():
+    assert not hasattr(nodes, "_format_conversation")
 
 
 # ---------------------------------------------------------------------------
@@ -434,10 +442,11 @@ async def _run_standalone() -> int:
         ("route_after_completion_check", test_route_after_completion_check),
         ("incomplete -> loop back", test_incomplete_verdict_loops_back),
         ("complete -> end", test_complete_verdict_ends),
-        ("prompt has todos + conversation", test_prompt_includes_todos_and_conversation),
+        ("prompt has todos only", test_prompt_includes_todos_only),
         ("llm failure keeps working", test_llm_failure_keeps_working),
-        ("no todos -> judge conversation", test_no_todos_judged_from_conversation),
-        ("format_conversation", test_format_conversation_skips_empty_and_notes_tool_calls),
+        ("no todos -> incomplete", test_no_todos_is_judged_incomplete),
+        ("prompt has no conversation", test_prompt_template_has_no_conversation_placeholder),
+        ("format_conversation removed", test_format_conversation_is_gone),
         ("seed standing todos (empty)", test_seed_standing_todos_on_empty_list),
         ("seed keeps agent todos", test_seed_standing_todos_keeps_agent_todos_after),
         ("seed is idempotent", test_seed_standing_todos_is_idempotent),

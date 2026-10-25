@@ -37,22 +37,16 @@ DEFAULT_EXISTING_SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
 
 TASK_COMPLETION_PROMPT = """You are auditing whether an AI agent has finished the user's task.
 
-Decide if the task is COMPLETE. Use both the TODO list and the conversation to judge.
+Decide if the task is COMPLETE by looking only at the TODO list.
 
 Rules:
-- COMPLETE only when every TODO item is marked "completed" AND the agent has delivered a concrete final answer to the user.
+- COMPLETE only when every TODO item is marked "completed".
 - INCOMPLETE if any TODO is "pending" or "in_progress".
-- INCOMPLETE if the agent is still gathering information or has only described what it plans to do.
-- INCOMPLETE if the agent asked the user a clarifying question, because work cannot proceed without the answer.
-- COMPLETE if the agent delivered a final answer and stated it is done or blocked and cannot continue without the user, and nothing remains that it can do on its own.
-- If there is no TODO list, judge from the conversation alone: has the user's request been fully answered?
+- INCOMPLETE if there is no TODO list, because progress cannot be verified.
 - Every list starts with two standing items: "Create a detailed list of pending tasks" and "Recheck that the answer reached the user...". Both count like any other TODO and must be "completed" before the task is complete.
 
 ## TODO list
 {todos}
-
-## Conversation
-{messages}
 
 Answer by calling the schema: set `is_complete` to true or false, and put your justification in `reasoning`."""
 
@@ -71,39 +65,6 @@ def _format_todos(todos) -> str:
             status = getattr(todo, "status", "unknown")
         lines.append(f"{i}. [{status}] {content}")
     return "\n".join(lines)
-
-
-def _format_conversation(messages, limit: int = 12) -> str:
-    """Render the tail of the conversation for the completion prompt."""
-    lines = []
-    for msg in messages[-limit:]:
-        msg_type = getattr(msg, "type", None) or (
-            msg.get("type") if isinstance(msg, dict) else None
-        ) or "unknown"
-        content = getattr(msg, "content", None)
-        if content is None and isinstance(msg, dict):
-            content = msg.get("content", "")
-
-        tool_calls = getattr(msg, "tool_calls", None) or (
-            msg.get("tool_calls") if isinstance(msg, dict) else None
-        ) or []
-
-        # Tool-call-only AI messages have empty content but are still meaningful
-        if not content and not tool_calls:
-            continue
-        if not isinstance(content, str):
-            content = str(content)
-
-        line = f"{msg_type}: {content.strip()}"
-        if tool_calls:
-            names = [
-                tc.get("name", "?") if isinstance(tc, dict) else getattr(tc, "name", "?")
-                for tc in tool_calls
-            ]
-            line += f" (requested tools: {', '.join(names)})"
-        lines.append(line)
-
-    return "\n\n".join(lines) if lines else "No conversation content available."
 
 
 # Two standing todos that must lead the list at the start of every human turn.
@@ -240,19 +201,16 @@ async def llm_is_task_complete(state: State):
 
     Reaching this node means the model returned no tool calls, which does not
     by itself prove the task is done -- the agent may have stopped mid-plan.
-    The LLM is given the TODO list and the recent conversation and returns a
-    structured Yes/No verdict.
+    Only the TODO list is consulted: the model's own prose is not evidence that
+    the work is finished, and judging from it let the agent talk its way to
+    "complete" while items were still open.
 
     Returns:
         Dict containing the `is_task_complete` flag and its reasoning.
     """
-    messages = state.get("messages", [])
     todos = state.get("todos", [])
 
-    prompt = TASK_COMPLETION_PROMPT.format(
-        todos=_format_todos(todos),
-        messages=_format_conversation(messages),
-    )
+    prompt = TASK_COMPLETION_PROMPT.format(todos=_format_todos(todos))
 
     try:
         verdict = await llm_task_completion.ainvoke(prompt)

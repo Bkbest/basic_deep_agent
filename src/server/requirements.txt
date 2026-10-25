@@ -5,6 +5,12 @@ python-multipart
 asyncpg
 croniter
 langchain
+# Trace addressing (LANGSMITH_AGENT_ID / LANGSMITH_AGENT_ENVIRONMENT) needs these
+# floors. Older langsmith attaches the default project (session_name) to an
+# agent-addressed run, which the ingest API rejects with HTTP 400:
+#   "Address the run by Agent, or by session_id or session_name, but not both."
+langsmith>=0.14.9
+langchain-core>=1.6.11
 faster-whisper
 piper-tts
 langchain-ollama
