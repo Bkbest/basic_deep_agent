@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 
 from croniter import croniter
@@ -26,6 +27,8 @@ from langgraph.types import RetryPolicy
 from datetime import datetime, timezone
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def create_research_brief_workflow():
@@ -479,7 +482,22 @@ async def get_cron(cron_id: str) -> dict:
 
 
 async def delete_cron(cron_id: str) -> bool:
-    """Delete a cron by cron_id (or thread_id). Returns True if a row was removed."""
+    """Delete a cron and the thread it runs on.
+
+    The cron's thread is created for it alone (`save_cron` creates it and cron
+    runs are checkpointed there), so deleting only the cron row would leave an
+    orphaned thread plus its checkpoints behind.
+
+    The row is read before deleting so the thread id is known: callers may pass
+    either a cron_id or a thread_id, and the two can differ when a cron was
+    renamed.
+
+    Args:
+        cron_id: The cron's cron_id or its thread_id.
+
+    Returns:
+        bool: True if a cron row was removed.
+    """
     connection_string = os.getenv("POSTGRES_CONNECTION_STRING")
     if not connection_string:
         raise ValueError("POSTGRES_CONNECTION_STRING environment variable not set")
@@ -487,13 +505,32 @@ async def delete_cron(cron_id: str) -> bool:
     conn = await asyncpg.connect(connection_string)
     try:
         await ensure_crons_table(conn)
+        row = await conn.fetchrow(
+            f'SELECT thread_id FROM {CRON_TABLE} WHERE cron_id = $1 OR thread_id = $1',
+            cron_id
+        )
         result = await conn.execute(
             f'DELETE FROM {CRON_TABLE} WHERE cron_id = $1 OR thread_id = $1',
             cron_id
         )
-        return result.endswith(" 1")
+        deleted = result.endswith(" 1")
     finally:
         await conn.close()
+
+    if deleted and row is not None and row["thread_id"]:
+        try:
+            await delete_thread(row["thread_id"])
+        except Exception as e:
+            # The cron is already gone; a thread cleanup failure must not make
+            # the delete look unsuccessful.
+            logger.warning(
+                "Could not delete thread %s for cron %s: %s",
+                row["thread_id"],
+                cron_id,
+                e,
+            )
+
+    return deleted
 
 
 async def set_cron_active(cron_id: str, is_active: bool) -> dict:
