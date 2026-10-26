@@ -1,11 +1,11 @@
-from langchain_core.messages import SystemMessage,AIMessage,HumanMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.prompts import PromptTemplate,ChatPromptTemplate
 from AI_State.state import State
 from AI_Tools.tools import MyTools
 from AI_Sys_Prompt.system_prompt_agent import AGENT_DESCRIPTION
 from AI_LLM.agent_llm import MyLLM
 from langgraph.graph import END
-from langmem.short_term import asummarize_messages, summarize_messages
+from langmem.short_term import RunningSummary, asummarize_messages
 from langgraph.runtime import Runtime
 import asyncio
 
@@ -19,7 +19,13 @@ llm_task_completion = llm_factory.llm_for_task_completion()
 DEFAULT_INITIAL_SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("placeholder", "{messages}"),
-        ("user", "Create a summary of the conversation above. If a sandbox was created during the conversation,you must include sandbox id in the summary and mention not to create a new sandbox."),
+        (
+            "user",
+            "Create a summary of the conversation above. If a sandbox was created "
+            "during the conversation, you must include the sandbox id in the summary "
+            "and mention not to create a new sandbox.\n\n"
+            "Reply with plain prose only. Do not call any tools.",
+        ),
     ]
 )
 
@@ -30,9 +36,30 @@ DEFAULT_EXISTING_SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
         (
             "user",
             "This is summary of the conversation so far: {existing_summary}\n\n"
-            "Extend this summary by taking into account the new messages above. If a sandbox ID was created during the conversation summary and history,you must include sandbox id(s) in the summary and mention not to create a new sandbox.",
+            "Extend this summary by taking into account the new messages above. If a "
+            "sandbox ID was created during the conversation summary and history, you "
+            "must include sandbox id(s) in the summary and mention not to create a new "
+            "sandbox.\n\n"
+            "Reply with plain prose only. Do not call any tools.",
         ),
     ]
+)
+
+# langmem's default `final_prompt` re-injects the system message and decides
+# whether to keep it with:
+#
+#     existing_summary.summary in existing_system_message.content
+#
+# When the summarization model returns an empty string (which happens when it
+# answers with tool calls instead of prose, because the history it is reading is
+# full of tool-call messages), `"" in <anything>` is True, so the agent's system
+# prompt is dropped and the conversation collapses to a lone
+# "Summary of the conversation so far:" message.
+#
+# Returning only the retained messages keeps that branch out of our path
+# entirely. We own the system message and append the summary to it ourselves.
+MESSAGES_ONLY_FINAL_PROMPT = ChatPromptTemplate.from_messages(
+    [("placeholder", "{messages}")]
 )
 
 TASK_COMPLETION_PROMPT = """You are auditing whether an AI agent has finished the user's task.
@@ -254,6 +281,70 @@ def route_after_completion_check(state: State):
     return "llm_with_tools"
 
 
+def _summary_text(summary) -> str:
+    """Return the summary's text, or "" when there is nothing usable.
+
+    A summarization model can answer with tool calls instead of prose, which
+    leaves `AIMessage.content` empty. That empty string is dangerous downstream,
+    so it is normalised to "" here and treated as "no summary".
+    """
+    if summary is None:
+        return ""
+    text = getattr(summary, "summary", summary)
+    if text is None:
+        return ""
+    return str(text).strip()
+
+
+async def _summarize(messages, running_summary):
+    """Summarize `messages`, never returning an empty summary.
+
+    langmem records whatever the model produced, including empty content. An
+    empty summary poisons `state["summary"]`: every later turn re-reads it and
+    (in langmem's default `final_prompt`) it silently deletes the agent's system
+    prompt. On rejection, the previous summary is kept and the messages are
+    returned unchanged, so no occurrence is lost or double-counted.
+
+    Args:
+        messages: Conversation messages, without the agent's system prompt.
+        running_summary: The `RunningSummary` from state, or None.
+
+    Returns:
+        tuple[list, RunningSummary | None]: Messages for the LLM and the
+        summary to persist. Note the messages are *not* reordered or filtered --
+        only an empty summary is rejected.
+    """
+    try:
+        result = await asummarize_messages(
+            messages,
+            running_summary=running_summary,
+            model=llm,
+            max_tokens=230000,
+            max_tokens_before_summary=110000,
+            max_summary_tokens=10000,
+            initial_summary_prompt=DEFAULT_INITIAL_SUMMARY_PROMPT,
+            existing_summary_prompt=DEFAULT_EXISTING_SUMMARY_PROMPT,
+            final_prompt=MESSAGES_ONLY_FINAL_PROMPT,
+        )
+    except Exception as e:
+        # Summarization must never break the turn; fall back to the full history.
+        print(f"⚠️  Summarization failed ({e}); continuing with full history")
+        return list(messages), running_summary
+
+    new_summary = result.running_summary
+    if new_summary is not None and not _summary_text(new_summary):
+        print(
+            "⚠️  Summarization returned no text (likely a tool call instead of prose); "
+            "keeping the previous summary"
+        )
+        return list(messages), running_summary
+
+    if new_summary is None:
+        return list(result.messages), running_summary
+
+    return list(result.messages), new_summary
+
+
 async def llm_with_tools(state: State, runtime: Runtime):
     """
     Processes messages using LLM with tools when required.
@@ -282,37 +373,26 @@ async def llm_with_tools(state: State, runtime: Runtime):
             f"{pending_note}\n"
         )
 
-    system_message = [SystemMessage(content=system_content)]
-    
-    #add systemmessage to the beginning of the messages to be summarized so that it is included in the summary.
-    state["messages"] = system_message + state["messages"]
-    
-    summarization_result = await asummarize_messages(
-        state["messages"],
-        running_summary=state.get("summary"),
-        model=llm,
-        max_tokens=230000,
-        max_tokens_before_summary=110000,
-        max_summary_tokens=10000,
-        initial_summary_prompt=DEFAULT_INITIAL_SUMMARY_PROMPT,
-        existing_summary_prompt=DEFAULT_EXISTING_SUMMARY_PROMPT,
+    # Summarization only ever sees the conversation. The system prompt is added
+    # afterwards, exactly once, so it cannot be summarized away or dropped by
+    # langmem's own system-message handling.
+    messages_after_summarization, summary = await _summarize(
+        list(state["messages"]), state.get("summary")
     )
-    messags_after_summarization = summarization_result.messages
-    
-    # If there are exactly two system messages after summarization, convert the second one to an AIMessage
-    system_message_indices = [i for i, msg in enumerate(messags_after_summarization) if isinstance(msg, SystemMessage)]
-    if len(system_message_indices) == 2:
-        print(system_message_indices)
-        second_system_idx = system_message_indices[1]
-        messags_after_summarization[second_system_idx] = AIMessage(content=messags_after_summarization[second_system_idx].content)
-        # Insert a HumanMessage after the second system message using the first message from state
-        human_msg = HumanMessage(content="Look at the summary and the conversation below and decide what to do next.")
-        messags_after_summarization.insert(second_system_idx, human_msg)
-        print(messags_after_summarization)
-    response = await llm_tools.ainvoke(messags_after_summarization)
+
+    summary_text = _summary_text(summary)
+    if summary_text:
+        system_content += (
+            "\n\n## Conversation summary so far\n"
+            f"{summary_text}\n"
+        )
+
+    messages_for_llm = [SystemMessage(content=system_content)] + messages_after_summarization
+
+    response = await llm_tools.ainvoke(messages_for_llm)
     state_update = {"messages": [response]}
-    if summarization_result.running_summary:
-        state_update["summary"] = summarization_result.running_summary
-    
+    if summary is not None:
+        state_update["summary"] = summary
+
     # Return the response as a message
     return state_update
