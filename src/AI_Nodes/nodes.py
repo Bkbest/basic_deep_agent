@@ -1,4 +1,4 @@
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import PromptTemplate,ChatPromptTemplate
 from AI_State.state import State
 from AI_Tools.tools import MyTools
@@ -296,32 +296,85 @@ def _summary_text(summary) -> str:
     return str(text).strip()
 
 
-async def _summarize(messages, running_summary):
-    """Summarize `messages`, never returning an empty summary.
+# Used when summarization leaves no conversation to send. A system-prompt-only
+# request makes some models (Ollama in particular) return empty content, so give
+# the model a user turn to answer instead of replaying summarized history.
+SUMMARY_ONLY_USER_MESSAGE = (
+    "Continue the task. The summary of the conversation so far is in the "
+    "system prompt above."
+)
 
-    langmem records whatever the model produced, including empty content. An
-    empty summary poisons `state["summary"]`: every later turn re-reads it and
-    (in langmem's default `final_prompt`) it silently deletes the agent's system
-    prompt. On rejection, the previous summary is kept and the messages are
-    returned unchanged, so no occurrence is lost or double-counted.
+
+def _sanitize_conversation(messages: list) -> list:
+    """Drop leading `ToolMessage`s from a message list.
+
+    langmem keeps the tail as `messages[total_summarized_messages:]`. When the
+    summarization cutoff lands on an `AIMessage` carrying tool calls, its
+    matching `ToolMessage`s are appended to the summarized slice, so the tail can
+    begin with a tool result whose parent assistant turn is gone. Providers
+    reject that shape, and Ollama answers it with empty content.
+
+    Only leading tool messages are removed; nothing else is filtered or
+    reordered.
+
+    Args:
+        messages: Messages to sanitize. Not mutated.
+
+    Returns:
+        list: A new list with leading tool messages removed.
+    """
+    if not messages:
+        return []
+    start = 0
+    while start < len(messages) and isinstance(messages[start], ToolMessage):
+        start += 1
+    if start:
+        print(f"Ignoring {start} orphaned tool message(s) at the start of the conversation")
+    return list(messages[start:])
+
+
+def _has_conversation(messages: list) -> bool:
+    """True when `messages` holds at least one non-system message."""
+    return any(not isinstance(m, SystemMessage) for m in messages or [])
+
+
+async def _summarize(messages, running_summary):
+    """Summarize `messages` without ever leaving the model an empty conversation.
+
+    Two langmem behaviours have to be guarded here:
+
+    1. **Empty summary.** It records whatever the model returned, including "".
+       An empty summary poisons `state["summary"]`, and langmem's default
+       `final_prompt` then deletes the agent's system prompt because
+       `"" in <anything>` is True. `MESSAGES_ONLY_FINAL_PROMPT` keeps that
+       branch out of the path, and empty summaries are rejected outright.
+
+    2. **Empty retained messages.** The kept tail is
+       `messages[total_summarized_messages:]`, which is empty when the cutoff
+       consumed every message. Because the cutoff is the first message where the
+       running total reaches `max_tokens_before_summary` *and* the remainder
+       fits the `max_tokens - max_summary_tokens` budget, and because that
+       budget check is trivially satisfied near the end of the list, the
+       retained tail can be empty or hold only orphaned tool results. A request
+       with nothing but a system message makes Ollama return empty content,
+       which then trips the completion-check cap.
 
     Args:
         messages: Conversation messages, without the agent's system prompt.
         running_summary: The `RunningSummary` from state, or None.
 
     Returns:
-        tuple[list, RunningSummary | None]: Messages for the LLM and the
-        summary to persist. Note the messages are *not* reordered or filtered --
-        only an empty summary is rejected.
+        tuple[list, RunningSummary | None]: Messages for the LLM (non-empty
+        whenever `messages` was non-empty) and the summary to persist.
     """
     try:
         result = await asummarize_messages(
             messages,
             running_summary=running_summary,
             model=llm,
-            max_tokens=230000,
-            max_tokens_before_summary=110000,
-            max_summary_tokens=10000,
+            max_tokens=530000,
+            max_tokens_before_summary=460000,
+            max_summary_tokens=50000,
             initial_summary_prompt=DEFAULT_INITIAL_SUMMARY_PROMPT,
             existing_summary_prompt=DEFAULT_EXISTING_SUMMARY_PROMPT,
             final_prompt=MESSAGES_ONLY_FINAL_PROMPT,
@@ -329,20 +382,39 @@ async def _summarize(messages, running_summary):
     except Exception as e:
         # Summarization must never break the turn; fall back to the full history.
         print(f"⚠️  Summarization failed ({e}); continuing with full history")
-        return list(messages), running_summary
+        return _sanitize_conversation(messages), running_summary
 
     new_summary = result.running_summary
+    kept = _sanitize_conversation(result.messages)
+
+    # Guard 1: reject an empty summary so it can never poison state.
     if new_summary is not None and not _summary_text(new_summary):
         print(
             "⚠️  Summarization returned no text (likely a tool call instead of prose); "
             "keeping the previous summary"
         )
-        return list(messages), running_summary
+        new_summary = running_summary
 
-    if new_summary is None:
-        return list(result.messages), running_summary
+    # Guard 2: never call the model with nothing but a system prompt.
+    if not _has_conversation(kept):
+        if _summary_text(new_summary):
+            # Nothing survived the cut, but the summary did. Give the model a
+            # user turn rather than replaying history that was just summarized.
+            print(
+                "⚠️  Summarization left no conversation; "
+                "continuing from the summary alone"
+            )
+            kept = [HumanMessage(content=SUMMARY_ONLY_USER_MESSAGE)]
+        else:
+            # Both the conversation and the summary are gone, so replaying is
+            # the only way to avoid an empty turn. Log it so it stays visible.
+            print(
+                "⚠️  Summarization left no conversation and no summary; "
+                "falling back to the full history"
+            )
+            kept = _sanitize_conversation(messages)
 
-    return list(result.messages), new_summary
+    return kept, new_summary
 
 
 async def llm_with_tools(state: State, runtime: Runtime):
