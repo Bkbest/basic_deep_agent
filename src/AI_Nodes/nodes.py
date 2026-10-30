@@ -296,13 +296,25 @@ def _summary_text(summary) -> str:
     return str(text).strip()
 
 
-# Used when summarization leaves no conversation to send. A system-prompt-only
-# request makes some models (Ollama in particular) return empty content, so give
-# the model a user turn to answer instead of replaying summarized history.
+# Used when a request's retained history no longer begins with a human turn and a
+# summary is available. A system-prompt-only request, or one that starts with an
+# assistant turn, makes some models (Ollama in particular) return empty content.
 SUMMARY_ONLY_USER_MESSAGE = (
     "Continue the task. The summary of the conversation so far is in the "
     "system prompt above."
 )
+
+# Same purpose as above, but for when no summary could be produced either, so
+# pointing at one would be a lie.
+CONTINUATION_USER_MESSAGE = (
+    "Continue the task from where it was left off. Pick the next step and keep "
+    "working until every todo item is completed."
+)
+
+# Stable id so the synthetic turn is recognisable in logs and can be matched
+# exactly. It is never written to `state["messages"]`, so it cannot collide with
+# a real message or get pulled into a later summarization round.
+CONTINUATION_MESSAGE_ID = "synthetic-continuation-turn"
 
 
 def _sanitize_conversation(messages: list) -> list:
@@ -338,6 +350,124 @@ def _has_conversation(messages: list) -> bool:
     return any(not isinstance(m, SystemMessage) for m in messages or [])
 
 
+def _needs_leading_user_turn(messages: list) -> bool:
+    """True when `messages` does not already begin with a human turn.
+
+    Providers accept a conversation that starts with a user turn. An
+    assistant-first history (the kept tail after a summarization cutoff landed on
+    an assistant message) or a tool-first history (cutoff landed on an assistant
+    turn that carried tool calls) is rejected or answered with empty content by
+    some models, Ollama in particular.
+
+    Args:
+        messages: Messages about to be sent (system message excluded or not).
+
+    Returns:
+        bool: True when a synthetic leading user turn has to be prepended.
+    """
+    for message in messages or []:
+        if isinstance(message, SystemMessage):
+            continue
+        return not isinstance(message, HumanMessage)
+    return True
+
+
+def _continuation_human_message(has_summary: bool) -> HumanMessage:
+    """Build the synthetic user turn that fronts a summarized request.
+
+    Never written to state: it exists only so the request starts with a human
+    turn. It is rebuilt on every call, which is what keeps the invariant true
+    even though the previous turn's copy was never persisted.
+
+    Args:
+        has_summary: True when a usable summary is already in the system prompt.
+
+    Returns:
+        HumanMessage: The continuation turn.
+    """
+    content = SUMMARY_ONLY_USER_MESSAGE if has_summary else CONTINUATION_USER_MESSAGE
+    return HumanMessage(content=content, id=CONTINUATION_MESSAGE_ID)
+
+
+def _ensure_leading_user_turn(kept: list, summary, original_messages: list) -> list:
+    """Guarantee that the messages sent to the model start with a human turn.
+
+    Called on every request, not just the first one after a summarization. The
+    earlier version only handled the case where the kept tail was completely
+    empty, so the very next turn -- whose tail is just the previous assistant
+    reply -- went out as system + assistant and the model answered with empty
+    content.
+
+    Args:
+        kept: Retained messages after summarization, already sanitized.
+        summary: The running summary that will accompany the request, or None.
+        original_messages: The full conversation, used as a fallback when both
+            the retained tail and the summary are gone.
+
+    Returns:
+        list: Messages that begin with a human turn (unless nothing at all is
+        available to send).
+    """
+    if not _has_conversation(kept):
+        if _summary_text(summary):
+            print(
+                "⚠️  Summarization left no conversation; "
+                "continuing from the summary alone"
+            )
+            return [_continuation_human_message(has_summary=True)]
+
+        # Both the conversation and the summary are gone, so replaying the
+        # history is the only way to avoid an empty turn.
+        print(
+            "⚠️  Summarization left no conversation and no summary; "
+            "falling back to the full history"
+        )
+        kept = _sanitize_conversation(original_messages)
+        if not kept:
+            return []
+
+    if _needs_leading_user_turn(kept):
+        print(
+            "⚠️  Retained history does not start with a user turn; "
+            "prepending a continuation message"
+        )
+        return [
+            _continuation_human_message(has_summary=bool(_summary_text(summary)))
+        ] + list(kept)
+
+    return kept
+
+
+def _is_empty_response(message) -> bool:
+    """True when a model reply carries neither text nor tool calls.
+
+    Some providers (Ollama in particular) answer with empty content. Storing
+    such a reply adds a blank assistant turn to the history that every later
+    call replays, so it is dropped instead.
+
+    A reply with tool calls counts as non-empty even when its content is "",
+    because the tool calls are what the graph routes on next.
+
+    Args:
+        message: The `AIMessage` returned by the model, or None.
+
+    Returns:
+        bool: True when there is nothing worth persisting.
+    """
+    if message is None:
+        return True
+    if getattr(message, "tool_calls", None):
+        return False
+    content = getattr(message, "content", "")
+    if isinstance(content, list):
+        # Content-block replies: keep only the text blocks.
+        content = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return not str(content).strip()
+
+
 async def _summarize(messages, running_summary):
     """Summarize `messages` without ever leaving the model an empty conversation.
 
@@ -349,15 +479,21 @@ async def _summarize(messages, running_summary):
        `"" in <anything>` is True. `MESSAGES_ONLY_FINAL_PROMPT` keeps that
        branch out of the path, and empty summaries are rejected outright.
 
-    2. **Empty retained messages.** The kept tail is
-       `messages[total_summarized_messages:]`, which is empty when the cutoff
+    2. **A retained tail that does not start with a user turn.** The kept tail
+       is `messages[total_summarized_messages:]`, which is empty when the cutoff
        consumed every message. Because the cutoff is the first message where the
        running total reaches `max_tokens_before_summary` *and* the remainder
        fits the `max_tokens - max_summary_tokens` budget, and because that
        budget check is trivially satisfied near the end of the list, the
-       retained tail can be empty or hold only orphaned tool results. A request
-       with nothing but a system message makes Ollama return empty content,
-       which then trips the completion-check cap.
+       retained tail can be empty, hold only orphaned tool results, or start at
+       an assistant reply. A request with nothing but a system message -- or one
+       that begins with an assistant turn -- makes Ollama return empty content,
+       and Ollama answering with empty content is what tripped the
+       completion-check cap.
+
+    The tail is recomputed from `state["messages"]` on every call, so a
+    synthetic user turn is prepended on demand rather than stored: the message
+    added for one request is gone from state by the next one.
 
     Args:
         messages: Conversation messages, without the agent's system prompt.
@@ -374,15 +510,20 @@ async def _summarize(messages, running_summary):
             model=llm,
             max_tokens=530000,
             max_tokens_before_summary=460000,
-            max_summary_tokens=50000,
+            max_summary_tokens=100000,
             initial_summary_prompt=DEFAULT_INITIAL_SUMMARY_PROMPT,
             existing_summary_prompt=DEFAULT_EXISTING_SUMMARY_PROMPT,
             final_prompt=MESSAGES_ONLY_FINAL_PROMPT,
         )
     except Exception as e:
         # Summarization must never break the turn; fall back to the full history.
+        # The leading-user-turn invariant still applies: a resumed thread whose
+        # history starts at an assistant reply would otherwise go out as-is.
         print(f"⚠️  Summarization failed ({e}); continuing with full history")
-        return _sanitize_conversation(messages), running_summary
+        fallback = _ensure_leading_user_turn(
+            _sanitize_conversation(messages), running_summary, messages
+        )
+        return fallback, running_summary
 
     new_summary = result.running_summary
     kept = _sanitize_conversation(result.messages)
@@ -395,24 +536,9 @@ async def _summarize(messages, running_summary):
         )
         new_summary = running_summary
 
-    # Guard 2: never call the model with nothing but a system prompt.
-    if not _has_conversation(kept):
-        if _summary_text(new_summary):
-            # Nothing survived the cut, but the summary did. Give the model a
-            # user turn rather than replaying history that was just summarized.
-            print(
-                "⚠️  Summarization left no conversation; "
-                "continuing from the summary alone"
-            )
-            kept = [HumanMessage(content=SUMMARY_ONLY_USER_MESSAGE)]
-        else:
-            # Both the conversation and the summary are gone, so replaying is
-            # the only way to avoid an empty turn. Log it so it stays visible.
-            print(
-                "⚠️  Summarization left no conversation and no summary; "
-                "falling back to the full history"
-            )
-            kept = _sanitize_conversation(messages)
+    # Guard 2: never call the model with a conversation that does not start
+    # with a user turn (including the extreme case of no conversation at all).
+    kept = _ensure_leading_user_turn(kept, new_summary, messages)
 
     return kept, new_summary
 
@@ -462,7 +588,15 @@ async def llm_with_tools(state: State, runtime: Runtime):
     messages_for_llm = [SystemMessage(content=system_content)] + messages_after_summarization
 
     response = await llm_tools.ainvoke(messages_for_llm)
-    state_update = {"messages": [response]}
+
+    state_update = {}
+    if _is_empty_response(response):
+        # Keep blank replies out of the history; replaying them only makes the
+        # next turn emptier.
+        print("⚠️  LLM returned an empty response; not adding it to the state")
+    else:
+        state_update["messages"] = [response]
+
     if summary is not None:
         state_update["summary"] = summary
 
