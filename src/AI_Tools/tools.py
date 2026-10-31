@@ -356,6 +356,10 @@ class MyTools:
                 "timeout": CAREER_OPS_HTTP_TIMEOUT_SECONDS,
                 "sse_read_timeout": CAREER_OPS_SSE_READ_TIMEOUT_SECONDS,
             },
+            "aseprite": {
+               "transport": "streamable_http",
+                "url": os.getenv("ASEPRITE_MCP_URL", "http://localhost:8123/mcp"),
+                },
         }
 
         toolkit = CalendarToolkit(api_resource=api_resource)

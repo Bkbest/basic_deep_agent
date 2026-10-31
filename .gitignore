@@ -166,3 +166,4 @@ gcp-oauth.keys.json.json
 token.json
 *.onnx.json
 *.onnx
+.vscode/settings.json
