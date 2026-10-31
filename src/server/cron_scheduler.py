@@ -5,13 +5,22 @@ rows whose `next_run_at` has passed and which are committed as claimed before
 any work starts. That makes the scheduler restart-safe -- a run that was
 already claimed is never fired twice, and occurrences missed while the server
 was down are skipped rather than replayed.
+
+Each occurrence is a fresh start: the cron's thread is deleted before the run
+so no checkpoint history leaks from the previous occurrence. The workflow
+recreates the thread itself, so a failed reset is logged and the run continues
+rather than losing the already-claimed occurrence.
 """
 
 import asyncio
 import os
 from typing import Awaitable, Callable, Optional
 
-from AI_Agent.basic_agent import claim_due_crons, recompute_cron_next_runs
+from AI_Agent.basic_agent import (
+    claim_due_crons,
+    delete_thread,
+    recompute_cron_next_runs,
+)
 
 # A runner takes (thread_id, prompt) and streams the workflow, exactly like a
 # user message would.
@@ -118,6 +127,26 @@ class CronScheduler:
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
 
+    async def _reset_thread(self, thread_id: str, name: str) -> None:
+        """Clear the cron's thread so the run starts from an empty history.
+
+        Best effort: the occurrence has already been claimed, so a failure here
+        must not stop the run. `invoke_workflow_stream` recreates the thread
+        row, so the run works even when the delete did not happen.
+        """
+        try:
+            print(f"🧹 Resetting thread {thread_id} for cron {name!r}")
+            await delete_thread(thread_id)
+            print(f"🧹 Thread {thread_id} reset for cron {name!r}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            import traceback
+            print(
+                f"⚠️  Could not reset thread {thread_id} for cron {name!r}: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+
     async def _run(self, cron: dict) -> None:
         """Run one cron's prompt on its thread, bounded by the semaphore."""
         cron_id = cron["cron_id"]
@@ -125,6 +154,10 @@ class CronScheduler:
         name = cron["name"]
 
         try:
+            # Reset before waiting for a slot: the occurrence owns this thread,
+            # so its history is cleared even while other runs are in flight.
+            await self._reset_thread(thread_id, name)
+
             async with self._semaphore:
                 print(f"⏰ Running cron {name!r} on thread {thread_id}")
                 await self._runner(thread_id, cron["prompt"])
