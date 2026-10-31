@@ -23,4 +23,6 @@ langchain-google-community[calendar]
 python-jose[cryptography]
 passlib[bcrypt]
 argon2-cffi
+python-jose
+passlib
 

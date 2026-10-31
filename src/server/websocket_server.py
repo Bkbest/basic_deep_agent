@@ -16,9 +16,66 @@ import asyncpg
 import os
 from langchain_core import load
 
-# Set Windows-compatible event loop policy for psycopg
+# The startup banners below use emoji. On Windows consoles the default
+# encoding is cp1252, and printing them raised
+#   UnicodeEncodeError: 'charmap' codec can't encode character '\u2705'
+# which aborted the module import. Reconfiguring with errors="replace" keeps
+# logging unbreakable even on a legacy console.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        # Stream is not a TextIOWrapper (redirected/piped) -- nothing to do.
+        pass
+
+# psycopg (used by langgraph's AsyncPostgresSaver) cannot run on Windows'
+# default ProactorEventLoop. It needs a SelectorEventLoop.
+#
+# Setting the *policy* here is not enough: uvicorn >= 0.36 builds its own loop
+# with `asyncio.run(..., loop_factory=...)`, and on Windows it passes
+# `asyncio.ProactorEventLoop` unless `--loop asyncio` is used. Under the
+# policy alone the app therefore ran on a Proactor loop and every workflow run
+# died with:
+#   psycopg.InterfaceError: Psycopg cannot use the 'ProactorEventLoop' ...
+#
+# The policy is still set so that any plain `asyncio.run(...)` in this process
+# (for example MCP tool discovery at import time) also gets a selector loop.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def _selector_loop_factory() -> asyncio.AbstractEventLoop:
+    """Loop factory that always produces a psycopg-compatible event loop."""
+    return asyncio.SelectorEventLoop()
+
+
+def run_server(host: Optional[str] = None, port: Optional[int] = None) -> None:
+    """Run the ASGI app on an event loop psycopg can actually use.
+
+    ``uvicorn.run(loop="asyncio")`` is not enough: uvicorn's
+    ``asyncio_loop_factory`` returns ``asyncio.ProactorEventLoop`` on Windows
+    whenever ``use_subprocess`` is false (i.e. no ``--reload`` and a single
+    worker), which is exactly the loop psycopg rejects. So the server is
+    served through an explicit ``asyncio.Runner`` with a selector loop
+    factory instead.
+    """
+    host = host or os.getenv("HOST", "0.0.0.0")
+    port = int(port or os.getenv("PORT", "8001"))
+
+    print(f"Starting WebSocket server on http://{host}:{port}")
+    print(f"WebSocket endpoint: ws://{host}:{port}/ws")
+
+    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(config)
+
+    if sys.platform == "win32":
+        try:
+            with asyncio.Runner(loop_factory=_selector_loop_factory) as runner:
+                runner.run(server.serve())
+        except KeyboardInterrupt:
+            print("🛑 Server interrupted")
+    else:
+        server.run()
 
 # Add the src directory to the path so we can import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -1118,10 +1175,4 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
 
 if __name__ == "__main__":
-    # Get host and port from environment variables with defaults
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8001"))
-    
-    print(f"Starting WebSocket server on http://{host}:{port}")
-    print(f"WebSocket endpoint: ws://{host}:{port}/ws")
-    uvicorn.run(app, host=host, port=port)
+    run_server()

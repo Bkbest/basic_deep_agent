@@ -14,6 +14,9 @@ __version__ = "1.0.0"
 __author__ = "AI Agent Team"
 
 # Export main components
-from .websocket_server import app, ConnectionManager
+# NOTE: the old ConnectionManager class was replaced by the module-level
+# websocket cache (register_websocket / unregister_websocket / get_websocket),
+# so only `app` is exported here.
+from .websocket_server import app
 
-__all__ = ["app", "ConnectionManager"]
+__all__ = ["app"]
