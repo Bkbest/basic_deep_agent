@@ -28,18 +28,6 @@ from langchain_google_community.calendar.utils import (
     get_google_credentials,
 )
 
-# Dice job-search MCP server. Public read-only tools, no authentication.
-DICE_MCP_URL_DEFAULT = "https://mcp.dice.com/mcp"
-DICE_HTTP_TIMEOUT_SECONDS = 20
-DICE_SSE_READ_TIMEOUT_SECONDS = 45
-
-# career-ops MCP server (LAN-only). Its scan/pipeline/evaluate tools drive
-# portal scraping and LLM evaluation, so they need a much longer read window
-# than a plain job lookup.
-CAREER_OPS_MCP_URL_DEFAULT = "http://192.168.68.111:8765/mcp"
-CAREER_OPS_HTTP_TIMEOUT_SECONDS = 20
-CAREER_OPS_SSE_READ_TIMEOUT_SECONDS = 180
-
 
 def _dedupe_tools(tools: list) -> list:
     """Drop tools whose name is already taken, keeping the first one.
@@ -340,26 +328,11 @@ class MyTools:
                 "transport": "streamable_http",
                 "url": os.getenv("SANDBOX_URL"),
             },
-            "dice": {
+            "syncnotsink": {
                 "transport": "streamable_http",
-                "url": os.getenv("DICE_MCP_URL", DICE_MCP_URL_DEFAULT),
-                # Adapter defaults are 30s/300s; those are too generous for a
-                # read-only job search and make outages look like hangs.
-                "timeout": DICE_HTTP_TIMEOUT_SECONDS,
-                "sse_read_timeout": DICE_SSE_READ_TIMEOUT_SECONDS,
-            },
-            "career_ops": {
-                "transport": "streamable_http",
-                "url": os.getenv("CAREER_OPS_MCP_URL", CAREER_OPS_MCP_URL_DEFAULT),
-                # scan/pipeline/evaluate can run for a while, so allow a long
-                # read window while keeping connection setup short.
-                "timeout": CAREER_OPS_HTTP_TIMEOUT_SECONDS,
-                "sse_read_timeout": CAREER_OPS_SSE_READ_TIMEOUT_SECONDS,
-            },
-            "aseprite": {
-               "transport": "streamable_http",
-                "url": os.getenv("ASEPRITE_MCP_URL", "http://localhost:8123/mcp"),
-                },
+                "url": "https://syncnotsink.in/mcp",
+                "headers": { "Authorization": "Bearer sns_ro_your_key_here" }
+            }
         }
 
         toolkit = CalendarToolkit(api_resource=api_resource)
