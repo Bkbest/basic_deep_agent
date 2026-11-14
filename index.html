@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Active Software Hackathons with Prize Pools</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(18, 24, 38, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --badge-prize: #10b981;
+      --badge-prize-bg: rgba(16, 185, 129, 0.12);
+      --badge-urgency: #f59e0b;
+      --badge-urgency-bg: rgba(245, 158, 11, 0.12);
+      --tag-bg: rgba(99, 102, 241, 0.12);
+      --tag-text: #a5b4fc;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 10% 20%, #111827 0%, var(--bg) 90%);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 32px 16px;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .date-badge {
+      font-size: 0.85rem;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--card-border);
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-top: 4px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+      gap: 20px;
+    }
+    @media (max-width: 640px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+      backdrop-filter: blur(8px);
+    }
+    .card:hover {
+      border-color: rgba(99, 102, 241, 0.4);
+      transform: translateY(-2px);
+    }
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .hackathon-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #fff;
+    }
+    .host-name {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .prize-badge {
+      background: var(--badge-prize-bg);
+      color: var(--badge-prize);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .tag {
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      font-weight: 500;
+    }
+    .tag.location {
+      background: rgba(255, 255, 255, 0.06);
+      color: #cbd5e1;
+    }
+    .description {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .perks-box {
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      font-size: 0.82rem;
+      border-left: 3px solid var(--accent);
+    }
+    .perks-title {
+      font-weight: 600;
+      color: #e2e8f0;
+      margin-bottom: 3px;
+    }
+    .card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 14px;
+      border-top: 1px solid var(--card-border);
+      gap: 12px;
+    }
+    .deadline {
+      font-size: 0.82rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--badge-urgency);
+      background: var(--badge-urgency-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    .btn-apply {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }
+    .btn-apply:hover {
+      background: var(--accent-hover);
+    }
+    footer {
+      margin-top: 40px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+      border-top: 1px solid var(--card-border);
+      padding-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Active Software Hackathons</h1>
+        <p class="subtitle">10 verified active competitions with confirmed prize money</p>
+      </div>
+      <div class="date-badge">Curated on 14 November 2026</div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">UGREEN Hackathon 2026 on AI NAS</h2>
+              <p class="host-name">Hosted by UGREEN &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$46,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Agentic AI</span>
+            <span class="tag">AI NAS / Systems</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Build an &quot;Uliya&quot; AI Skill that turns a UGREEN AI NAS into an intelligent agent &mdash; combining on-device storage, retrieval and automation. Ideal for engineers who like shipping production-grade AI tooling rather than toy demos.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Grand Prize $20,000 cash &middot; 2nd $10,000 &middot; 3rd $6,000 &middot; Most Creative $5,000 (2 winners). Top 30 finalists get a private Round 2 submission link plus 1:1 assistance.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Nov 15, 2026 &middot; 11:45pm PT &middot; ~1 day left</span>
+          </div>
+          <a href="https://ugreenhackathon.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">Meta VR Start Developer Competition 2026</h2>
+              <p class="host-name">Hosted by Meta &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$1,000,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">XR / Spatial Computing</span>
+            <span class="tag">Unity / Native Mobile</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Meta's flagship mixed-reality build: ship a hand-interaction-first experience for Quest across Gaming, Entertainment or Productivity tracks. Open to new builds or significantly-updated existing apps. $1M makes it the largest pool on this list.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Best New Gaming $100,000 &middot; Best New Entertainment $100,000 &middot; Best New Productivity $70,000 &middot; Best Adapted Gaming $100,000 &middot; plus $35k&ndash;$50k runner-up awards in every track.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Nov 18, 2026 &middot; 12:00pm PT &middot; 4 days left</span>
+          </div>
+          <a href="https://start-developer-competition-26.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">University Blockchain Conference Hackathon 2026</h2>
+              <p class="host-name">Hosted by college.xyz &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$22,000+</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Web3 / DeFi</span>
+            <span class="tag">Solana &amp; Arc</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Ship onchain applications across agentic payments, DeFi and onchain consumer tracks. Best suited to Solidity / Rust / TypeScript builders exploring autonomous payment rails and onchain agent economies.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Track Winner $2,000 each &middot; Best use of Solana $1,500 &middot; Best use of Arc $1,000 &middot; overall 1st $2,500 / 2nd $1,000 / 3rd $500 &middot; 3 months ElevenLabs Pro for every member of the winning team.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Nov 20, 2026 &middot; 12:00pm CT &middot; 6 days left</span>
+          </div>
+          <a href="https://ubc-hackathon-2026.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">#BuildHybridAI 2026</h2>
+              <p class="host-name">Hosted by Google (Firebase) &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$30,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Generative AI</span>
+            <span class="tag">Firebase AI Logic / Android / iOS</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Google's hybrid-inference challenge: build a Gen AI app on Firebase AI Logic running Gemini Nano 4 on-device (Chrome, Android) or Apple Foundation Models on iOS. Perfect for mobile and web devs who care about latency, privacy and offline AI.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Grand Prize $10,000 cash + interview + featured blog post &middot; 1st Runner-Up $7,000 &middot; 2nd Runner-Up $4,000 &middot; plus Best iOS App and platform-specific awards. Free Gemini quota accounts issued each sprint.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Nov 30, 2026 &middot; 2:00pm PT &middot; 16 days left</span>
+          </div>
+          <a href="https://firebasehybridaihackathon.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">Kiroween 2026</h2>
+              <p class="host-name">Hosted by Kiro (AWS) &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$100,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Agentic AI / DevTools</span>
+            <span class="tag">Open Source (required)</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Kiro's Halloween-themed hackathon: build a working app with the Kiro agentic IDE/CLI using spec-driven development, hooks, steering docs and MCP. Four spooky categories &mdash; Resurrection, Frankenstein, Skeleton Crew and Costume Contest. An open-source repo with a licence file is mandatory.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>1st $30,000 &middot; 2nd $20,000 &middot; 3rd $10,000 &middot; $5,000 per category winner &middot; Best Startup Project $10,000 &middot; Best Ghost of Kiroween Past $2,000 &middot; Best Kiro Crew App $1,000. 13,500+ participants already registered.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Dec 4, 2026 &middot; 2:00pm PT &middot; 20 days left</span>
+          </div>
+          <a href="https://kiroween.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">Deck the Pixels</h2>
+              <p class="host-name">Hosted by Google &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$25,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Generative AI / Image</span>
+            <span class="tag">Nano Banana / Full-Stack</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            A festive creative-coding sprint built on Nano Banana, judged by senior product leads including Adobe Photoshop PMs. Ship an image-generation or design-forward app with heavy weighting on visual polish and delight. Great fit for design-engineers and creative technologists.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Top of the Tree (1st) $8,000 &middot; Silver Bells (2nd) $5,000 &middot; Golden Garland (3rd) $3,000 &middot; Top Banana Best Use of Nano Banana $2,500 &middot; The Worst Noel $2,000 &times; 3 &middot; Community Fan Favorite $500.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Dec 7, 2026 &middot; 4:00pm ET &middot; 23 days left</span>
+          </div>
+          <a href="https://deckthepixels.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">Reddit's Game of the Day Hackathon</h2>
+              <p class="host-name">Hosted by Reddit &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$35,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Web / Gaming</span>
+            <span class="tag">Devvit Platform / TypeScript</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Build a daily-habit game that lives natively inside Reddit using the Devvit developer platform. Reddit's own panel judges on delightful UX and polish. A rare low-competition opening in web app development on a platform with 100M+ daily users.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Best Daily Game $15,000 &middot; Best Ported Daily Game $6,000 &middot; Honorable Mentions $1,000 &times; 10 &middot; Devvit Helper Award $500 &times; 6 &middot; Feedback Awards $200 &times; 5.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Dec 8, 2026 &middot; 6:00pm PT &middot; 24 days left</span>
+          </div>
+          <a href="https://redditgameofday2026.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">AWS MSP AI Hackathon</h2>
+              <p class="host-name">Hosted by Amazon Web Services &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$64,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Cloud / Enterprise AI</span>
+            <span class="tag">AWS Bedrock / Full-Stack</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Build a production-ready, publicly hosted AI solution on AWS AI services across two tracks: running your MSP business better, or delivering AI-driven outcomes for end customers. Note the eligibility gate &mdash; you must be an AWS Partner Network / MSP partner.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Share of a $64,000 pool &middot; Winners featured in the MSP AI Use Case Library &middot; Priority AWS go-to-market and white-glove enablement support &middot; Spotlight at the AWS Global Partner Summit &middot; $200 AWS credits per account.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Dec 11, 2026 &middot; 12:00pm PT &middot; 27 days left</span>
+          </div>
+          <a href="https://aws-agentic-msp.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">QNX Global Hackathon</h2>
+              <p class="host-name">Hosted by QNX (BlackBerry) &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$50,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Systems / Embedded</span>
+            <span class="tag">C/C++ / RTOS / IoT</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            A genuine systems-programming hackathon: build on the QNX real-time OS across robotics, medical, automotive, low-level software, developer tooling and open-source ports. Ideal for embedded engineers, kernel hackers and anyone tired of yet another CRUD app.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>Grand Prize $10,000 + Code the Future Podcast episode + coffee chat with QNX CEO John Wall &middot; $4,000 each for Best of Robotics &amp; Medical, Automotive &amp; Mobility, Low-level Software, Developer Tooling, and Open-Source Contribution &amp; Ports.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Dec 15, 2026 &middot; 2:00pm ET &middot; 31 days left</span>
+          </div>
+          <a href="https://qnx.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+      <div class="card">
+        <div>
+          <div class="card-top">
+            <div>
+              <h2 class="hackathon-title">Codegeist 2026</h2>
+              <p class="host-name">Hosted by Atlassian &middot; Devpost</p>
+            </div>
+            <div class="prize-badge">$120,000</div>
+          </div>
+
+          <div class="tags">
+            <span class="tag">Full-Stack / SaaS</span>
+            <span class="tag">Atlassian Forge / MCP / Rovo</span>
+            <span class="tag location">Online, Global</span>
+          </div>
+
+          <p class="description">
+            Atlassian's flagship build: ship a Forge app that integrates at least one Atlassian product, targeting software teams, business teams or specialised industries. Heavy bonus weighting on Rovo agents, Atlassian MCP servers and Teamwork Graph integration.
+          </p>
+
+          <div class="perks-box">
+            <div class="perks-title">Prizes &amp; Highlights:</div>
+            <div>1st Place $15,000 &times; 3 &middot; 2nd $8,000 &times; 3 &middot; 3rd $5,000 &times; 3 &middot; four $1,500 bonus tracks with 6 winners each (Best Agents, Best Atlassian MCP app, Best Teamwork Graph integration, Best Marketplace app) &middot; 1st-place teams get 2 tickets to Team 2027 AMER + signed Williams Racing swag.</div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="deadline">
+            <span>&#9201; Closes Dec 22, 2026 &middot; 12:00pm PT &middot; 38 days left</span>
+          </div>
+          <a href="https://codegeist2026.devpost.com/" target="_blank" rel="noopener noreferrer" class="btn-apply">
+            Register &rarr;
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Autonomous Hackathon Scout. Strictly verified for active registration status and cash prize pools.
+    </footer>
+  </div>
+</body>
+</html>
