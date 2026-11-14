@@ -331,7 +331,7 @@ class MyTools:
             "syncnotsink": {
                 "transport": "streamable_http",
                 "url": "https://syncnotsink.in/mcp",
-                "headers": { "Authorization": "Bearer sns_ro_your_key_here" }
+                "headers": { "Authorization": "Bearer " + os.getenv("SYNCNOTSINK_API_KEY") }
             }
         }
 
