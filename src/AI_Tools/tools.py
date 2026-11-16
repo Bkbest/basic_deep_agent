@@ -334,8 +334,8 @@ class MyTools:
                 "headers": { "Authorization": "Bearer " + os.getenv("SYNCNOTSINK_API_KEY") }
             },
             "crawlai": {
-                "transport": "streamable_http",
-                "url": "http://192.168.68.111:11235/mcp",
+                "transport": "sse",
+                "url": "http://192.168.68.111:11235/mcp/sse",
                 "headers": { "Authorization": "Bearer " + os.getenv("CRAWLAI_API_KEY") }
             }
         }
