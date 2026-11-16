@@ -347,7 +347,7 @@ class MyTools:
         filtered_calendar_tools = [tool for tool in tools if tool.name in calendar_tool_names]
 
         mcp_tools = await self._load_mcp_tools(connections)
-        local_tools = [write_todos,read_todos,think_tool,internet_search,list_skills,read_skill,save_skill,SEARCH_CALENDAR_EVENT]
+        local_tools = [write_todos,read_todos,think_tool,list_skills,read_skill,save_skill,SEARCH_CALENDAR_EVENT]
         # Guard the whole set: ToolNode resolves tools by name, so a clash
         # would silently shadow one definition.
         return _dedupe_tools(local_tools + mcp_tools + filtered_calendar_tools)
