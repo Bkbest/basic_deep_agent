@@ -47,12 +47,12 @@ def _tool_error_message(error: Exception) -> str:
     )
     
     
-def custom_tool_node(state: dict):
+async def custom_tool_node(state: dict):
     all_tools = MyTools().getToolsSync()
     base_tool_node = ToolNode(all_tools, handle_tool_errors=_tool_error_message)
     # 1. Execute the tools (returns dict with new ToolMessages, not yet in state)
     result = base_tool_node.invoke(state)
-    new_messages = result.get("messages", [])
+    new_messages = result if isinstance(result, list) else result.get("messages", [])
     
     # 2. Check token count before updating state
     for msg in new_messages:
