@@ -71,7 +71,6 @@ def custom_tool_node(state: dict):
 def create_research_brief_workflow():
     # Create the workflow graph
     workflow = StateGraph(state_schema=State)
-    all_tools = MyTools().getToolsSync()
 
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
@@ -107,7 +106,7 @@ async def invoke_workflow_stream(thread_id, message):
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        ToolNode(all_tools, handle_tool_errors=_tool_error_message),
+        custom_tool_node,
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
