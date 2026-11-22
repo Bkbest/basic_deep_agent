@@ -68,11 +68,20 @@ def _attach_screenshot(message: ToolMessage) -> None:
         message: A `ToolMessage`, rewritten in place when it matches.
     """
     if not isinstance(message.content, str):
+        logger.info(
+            "Screenshot check skipped for tool '%s': content is %s, not a JSON string",
+            message.name,
+            type(message.content).__name__,
+        )
         return
 
     try:
         payload = json.loads(message.content)
     except (TypeError, ValueError):
+        logger.info(
+            "Screenshot check skipped for tool '%s': content is not JSON",
+            message.name,
+        )
         return
 
     data = payload.get("screenshot") if isinstance(payload, dict) else None
@@ -86,6 +95,15 @@ def _attach_screenshot(message: ToolMessage) -> None:
         {"type": "text", "text": json.dumps(payload, ensure_ascii=False)},
         {"type": "image_url", "image_url": f"data:{mime_type};base64,{data}"},
     ]
+
+    logger.info(
+        "Attached screenshot from tool '%s' as an image block (%s, %d base64 chars, "
+        "artifact_id=%s)",
+        message.name,
+        mime_type,
+        len(data),
+        payload.get("artifact_id"),
+    )
 
 
 def _guard_tool_output(result):
@@ -107,11 +125,23 @@ def _guard_tool_output(result):
                 f"Error: Output exceeded {MAX_TOOL_OUTPUT_TOKENS} tokens "
                 f"({token_count} tokens). Please narrow your query."
             )
+        else:
+            logger.debug(
+                "Tool '%s' output accepted (%d tokens, content=%s)",
+                result.name,
+                token_count,
+                "multimodal" if isinstance(result.content, list) else "text",
+            )
         return result
 
     if isinstance(result, list):
         for item in result:
             _guard_tool_output(item)
+    else:
+        logger.debug(
+            "Tool output of type %s passed through untouched",
+            type(result).__name__,
+        )
     return result
 
 
