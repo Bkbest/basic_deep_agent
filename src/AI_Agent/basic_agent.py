@@ -50,14 +50,12 @@ def _tool_error_message(error: Exception) -> str:
 # ~85 tokens per image, so a screenshot does not trip this; runaway *text* does.
 MAX_TOOL_OUTPUT_TOKENS = 250000
 
-# Name of the MCP tool whose JSON result carries a base64 screenshot.
-SCREENSHOT_TOOL = "screenshot"
-
 
 def _attach_screenshot(message: ToolMessage) -> None:
-    """Move the screenshot tool's base64 payload into an image block.
+    """Move an embedded screenshot payload into an image block.
 
-    The tool answers with JSON such as::
+    Recognises the payload by its ``screenshot`` key, regardless of which tool
+    produced it::
 
         {"success": true, "screenshot": "<base64>", "artifact_id": "...",
          "url": "/artifacts/...", "mime": "image/png", "size": 60724}
@@ -67,7 +65,7 @@ def _attach_screenshot(message: ToolMessage) -> None:
     flag, artifact URL, mime) stays in the text part.
 
     Args:
-        message: The screenshot tool's `ToolMessage`, rewritten in place.
+        message: A `ToolMessage`, rewritten in place when it matches.
     """
     if not isinstance(message.content, str):
         return
@@ -76,10 +74,8 @@ def _attach_screenshot(message: ToolMessage) -> None:
         payload = json.loads(message.content)
     except (TypeError, ValueError):
         return
-    if not isinstance(payload, dict):
-        return
 
-    data = payload.get("screenshot")
+    data = payload.get("screenshot") if isinstance(payload, dict) else None
     if not isinstance(data, str) or not data:
         return
 
@@ -103,8 +99,7 @@ def _guard_tool_output(result):
         carry their own state updates.
     """
     if isinstance(result, ToolMessage):
-        if result.name == SCREENSHOT_TOOL:
-            _attach_screenshot(result)
+        _attach_screenshot(result)
 
         token_count = count_tokens_approximately([result])
         if token_count > MAX_TOOL_OUTPUT_TOKENS:
