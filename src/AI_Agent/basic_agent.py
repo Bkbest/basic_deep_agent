@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import sys
 
@@ -45,13 +46,92 @@ def _tool_error_message(error: Exception) -> str:
         "Retry the call, or continue with a different approach."
     )
     
-def check_tool_tokens(request, handler):
-    result = handler(request)
+# Hard cap on one tool result. `count_tokens_approximately` charges a flat
+# ~85 tokens per image, so a screenshot does not trip this; runaway *text* does.
+MAX_TOOL_OUTPUT_TOKENS = 250000
+
+# Name of the MCP tool whose JSON result carries a base64 screenshot.
+SCREENSHOT_TOOL = "screenshot"
+
+
+def _attach_screenshot(message: ToolMessage) -> None:
+    """Move the screenshot tool's base64 payload into an image block.
+
+    The tool answers with JSON such as::
+
+        {"success": true, "screenshot": "<base64>", "artifact_id": "...",
+         "url": "/artifacts/...", "mime": "image/png", "size": 60724}
+
+    As text that base64 is unusable by the model and expensive to tokenise, so
+    it is swapped for an `image_url` block. The rest of the payload (success
+    flag, artifact URL, mime) stays in the text part.
+
+    Args:
+        message: The screenshot tool's `ToolMessage`, rewritten in place.
+    """
+    if not isinstance(message.content, str):
+        return
+
+    try:
+        payload = json.loads(message.content)
+    except (TypeError, ValueError):
+        return
+    if not isinstance(payload, dict):
+        return
+
+    data = payload.get("screenshot")
+    if not isinstance(data, str) or not data:
+        return
+
+    mime_type = payload.get("mime") or "image/png"
+    payload["screenshot"] = "<image data omitted; attached as an image block>"
+
+    message.content = [
+        {"type": "text", "text": json.dumps(payload, ensure_ascii=False)},
+        {"type": "image_url", "image_url": f"data:{mime_type};base64,{data}"},
+    ]
+
+
+def _guard_tool_output(result):
+    """Attach screenshot images, then cap runaway text output.
+
+    Args:
+        result: A tool result: `ToolMessage`, a list of them, or a `Command`.
+
+    Returns:
+        The same object. `Command` results pass through untouched because they
+        carry their own state updates.
+    """
     if isinstance(result, ToolMessage):
-        token_count = count_tokens_approximately(str(result.content))
-        if token_count > 250000:
-            result.content = f"Error: Output exceeded  ({token_count} tokens) Please narrow your query."
+        if result.name == SCREENSHOT_TOOL:
+            _attach_screenshot(result)
+
+        token_count = count_tokens_approximately([result])
+        if token_count > MAX_TOOL_OUTPUT_TOKENS:
+            result.content = (
+                f"Error: Output exceeded {MAX_TOOL_OUTPUT_TOKENS} tokens "
+                f"({token_count} tokens). Please narrow your query."
+            )
+        return result
+
+    if isinstance(result, list):
+        for item in result:
+            _guard_tool_output(item)
     return result
+
+
+def tool_wrapper(request, handler):
+    """Wrap a synchronous tool call with the screenshot and token handling."""
+    return _guard_tool_output(handler(request))
+
+
+async def async_tool_wrapper(request, handler):
+    """Async twin of `tool_wrapper`, for `ToolNode(awrap_tool_call=...)`.
+
+    `ToolNode` awaits the async wrapper, so a sync function registered there
+    would raise "object ToolMessage can't be used in 'await' expression".
+    """
+    return _guard_tool_output(await handler(request))
 
 
 def create_research_brief_workflow():
@@ -63,7 +143,7 @@ def create_research_brief_workflow():
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=check_tool_tokens),
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=tool_wrapper),
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
@@ -93,7 +173,7 @@ async def invoke_workflow_stream(thread_id, message):
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        ToolNode(all_tools, handle_tool_errors=_tool_error_message, awrap_tool_call=check_tool_tokens),
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message, awrap_tool_call=async_tool_wrapper),
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
