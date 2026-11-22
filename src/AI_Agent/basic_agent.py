@@ -50,13 +50,49 @@ def _tool_error_message(error: Exception) -> str:
 # ~85 tokens per image, so a screenshot does not trip this; runaway *text* does.
 MAX_TOOL_OUTPUT_TOKENS = 250000
 
+# Name of the MCP tool whose JSON result carries a base64 screenshot.
+SCREENSHOT_TOOL = "screenshot"
+
+
+def _screenshot_payload(block):
+    """Parse the screenshot payload held in a text content block.
+
+    The MCP tool returns its result as one text block whose ``text`` is a JSON
+    string, so that is the only shape inspected here.
+
+    Args:
+        block: One item from a `ToolMessage.content` list.
+
+    Returns:
+        dict | None: The payload holding a non-empty `screenshot` string.
+    """
+    text = block.get("text") if isinstance(block, dict) else None
+    if not isinstance(text, str):
+        return None
+
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(payload, str):  # JSON-encoded twice
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            return None
+
+    if (
+        isinstance(payload, dict)
+        and isinstance(payload.get("screenshot"), str)
+        and payload["screenshot"]
+    ):
+        return payload
+    return None
+
 
 def _attach_screenshot(message: ToolMessage) -> None:
-    print(message)
     """Move an embedded screenshot payload into an image block.
 
-    Recognises the payload by its ``screenshot`` key, regardless of which tool
-    produced it::
+    The tool returns content blocks, one of which holds JSON such as::
 
         {"success": true, "screenshot": "<base64>", "artifact_id": "...",
          "url": "/artifacts/...", "mime": "image/png", "size": 60724}
@@ -66,45 +102,33 @@ def _attach_screenshot(message: ToolMessage) -> None:
     flag, artifact URL, mime) stays in the text part.
 
     Args:
-        message: A `ToolMessage`, rewritten in place when it matches.
+        message: The screenshot tool's `ToolMessage`, rewritten in place.
     """
-    if not isinstance(message.content, str):
-        logger.info(
-            "Screenshot check skipped for tool '%s': content is %s, not a JSON string",
-            message.name,
-            type(message.content).__name__,
+    if not isinstance(message.content, list):
+        return
+
+    parts = []
+    attached = False
+    for block in message.content:
+        payload = _screenshot_payload(block)
+        if payload is None:
+            parts.append(block)
+            continue
+
+        data = payload["screenshot"]
+        mime_type = payload.get("mime") or "image/png"
+        payload = {
+            **payload,
+            "screenshot": "<image data omitted; attached as an image block>",
+        }
+        parts.append({"type": "text", "text": json.dumps(payload, ensure_ascii=False)})
+        parts.append(
+            {"type": "image_url", "image_url": f"data:{mime_type};base64,{data}"}
         )
-        return
+        attached = True
 
-    try:
-        payload = json.loads(message.content)
-    except (TypeError, ValueError):
-        logger.info(
-            "Screenshot check skipped for tool '%s': content is not JSON",
-            message.name,
-        )
-        return
-
-    data = payload.get("screenshot") if isinstance(payload, dict) else None
-    if not isinstance(data, str) or not data:
-        return
-
-    mime_type = payload.get("mime") or "image/png"
-    payload["screenshot"] = "<image data omitted; attached as an image block>"
-
-    message.content = [
-        {"type": "text", "text": json.dumps(payload, ensure_ascii=False)},
-        {"type": "image_url", "image_url": f"data:{mime_type};base64,{data}"},
-    ]
-
-    logger.info(
-        "Attached screenshot from tool '%s' as an image block (%s, %d base64 chars, "
-        "artifact_id=%s)",
-        message.name,
-        mime_type,
-        len(data),
-        payload.get("artifact_id"),
-    )
+    if attached:
+        message.content = parts
 
 
 def _guard_tool_output(result):
@@ -118,7 +142,8 @@ def _guard_tool_output(result):
         carry their own state updates.
     """
     if isinstance(result, ToolMessage):
-        _attach_screenshot(result)
+        if result.name == SCREENSHOT_TOOL:
+            _attach_screenshot(result)
 
         token_count = count_tokens_approximately([result])
         if token_count > MAX_TOOL_OUTPUT_TOKENS:
@@ -126,23 +151,11 @@ def _guard_tool_output(result):
                 f"Error: Output exceeded {MAX_TOOL_OUTPUT_TOKENS} tokens "
                 f"({token_count} tokens). Please narrow your query."
             )
-        else:
-            logger.debug(
-                "Tool '%s' output accepted (%d tokens, content=%s)",
-                result.name,
-                token_count,
-                "multimodal" if isinstance(result.content, list) else "text",
-            )
         return result
 
     if isinstance(result, list):
         for item in result:
             _guard_tool_output(item)
-    else:
-        logger.debug(
-            "Tool output of type %s passed through untouched",
-            type(result).__name__,
-        )
     return result
 
 
