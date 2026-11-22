@@ -52,6 +52,7 @@ MAX_TOOL_OUTPUT_TOKENS = 250000
 
 
 def _attach_screenshot(message: ToolMessage) -> None:
+    print(message)
     """Move an embedded screenshot payload into an image block.
 
     Recognises the payload by its ``screenshot`` key, regardless of which tool
