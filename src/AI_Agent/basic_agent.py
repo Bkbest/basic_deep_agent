@@ -45,15 +45,7 @@ def _tool_error_message(error: Exception) -> str:
         "Retry the call, or continue with a different approach."
     )
     
-async def check_tool_tokens(request, handler):
-    result = await handler(request)
-    if isinstance(result, ToolMessage):
-        token_count = count_tokens_approximately(str(result.content))
-        if token_count > 250000:
-            result.content = f"Error: Output exceeded  ({token_count} tokens) Please narrow your query."
-    return result
-
-def check_tool_tokens_sync(request, handler):
+def check_tool_tokens(request, handler):
     result = handler(request)
     if isinstance(result, ToolMessage):
         token_count = count_tokens_approximately(str(result.content))
@@ -71,7 +63,7 @@ def create_research_brief_workflow():
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=check_tool_tokens_sync),
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=check_tool_tokens),
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
