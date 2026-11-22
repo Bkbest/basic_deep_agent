@@ -93,7 +93,7 @@ async def invoke_workflow_stream(thread_id, message):
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=check_tool_tokens),
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message, awrap_tool_call=check_tool_tokens),
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
