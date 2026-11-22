@@ -2,6 +2,7 @@ from langchain_core.tools import tool, InjectedToolCallId
 from AI_State.state import Todo
 from langgraph.types import Command
 from langchain_core.messages import ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from typing_extensions import Annotated, Literal, Optional
 from langgraph.prebuilt.tool_node import InjectedState
 from langchain_google_community import CalendarToolkit

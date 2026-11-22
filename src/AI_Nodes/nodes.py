@@ -220,6 +220,11 @@ async def is_tool_required(state: State):
         # No tool call does not mean the task is finished -- verify with the LLM.
         print("Tool not required, checking if task is complete")
         return "llm_is_task_complete"
+    
+async def after_tool_node(state: State):
+    """check the if the last meesage was a tool message and count total tokens used in the tool message and if it exceeds 250000 then return"""
+    return "llm_is_task_complete"
+    
 
 
 async def llm_is_task_complete(state: State):
