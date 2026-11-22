@@ -315,6 +315,89 @@ def think_tool(reflection: str) -> str:
     """
     return f"Reflection recorded: {reflection}"
 
+
+# ---------------------------------------------------------------------------
+# Arithmetic tools
+# ---------------------------------------------------------------------------
+# Deliberately four separate narrow tools rather than one
+# ``calculate(expression: str)`` tool: the model has to state the operands
+# explicitly, and nothing here can be used to smuggle in arbitrary Python
+# (which an ``eval``-style tool would allow).
+
+
+@tool(parse_docstring=True)
+def add(a: float, b: float) -> float:
+    """Add two numbers.
+
+    Use this instead of doing arithmetic in your head, which is unreliable for
+    large numbers or decimals.
+
+    Args:
+        a: The first number.
+        b: The second number.
+
+    Returns:
+        The sum ``a + b``.
+    """
+    return a + b
+
+
+@tool(parse_docstring=True)
+def subtract(a: float, b: float) -> float:
+    """Subtract one number from another.
+
+    Use this instead of doing arithmetic in your head, which is unreliable for
+    large numbers or decimals.
+
+    Args:
+        a: The number to subtract from.
+        b: The number to subtract.
+
+    Returns:
+        The difference ``a - b``.
+    """
+    return a - b
+
+
+@tool(parse_docstring=True)
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers.
+
+    Use this instead of doing arithmetic in your head, which is unreliable for
+    large numbers or decimals.
+
+    Args:
+        a: The first number.
+        b: The second number.
+
+    Returns:
+        The product ``a * b``.
+    """
+    return a * b
+
+
+@tool(parse_docstring=True)
+def divide(a: float, b: float) -> float:
+    """Divide one number by another.
+
+    Use this instead of doing arithmetic in your head, which is unreliable for
+    large numbers or decimals.
+
+    Args:
+        a: The dividend (the number being divided).
+        b: The divisor (the number to divide by). Must not be zero.
+
+    Returns:
+        The quotient ``a / b``.
+
+    Raises:
+        ValueError: If ``b`` is zero, because the result is undefined.
+    """
+    if b == 0:
+        raise ValueError("Cannot divide by zero")
+    return a / b
+
+
 class MyTools:
     async def getAllTools(self):
         """Return every tool the agent can call.
@@ -348,7 +431,19 @@ class MyTools:
         filtered_calendar_tools = [tool for tool in tools if tool.name in calendar_tool_names]
 
         mcp_tools = await self._load_mcp_tools(connections)
-        local_tools = [write_todos,read_todos,think_tool,list_skills,read_skill,save_skill,SEARCH_CALENDAR_EVENT]
+        local_tools = [
+            write_todos,
+            read_todos,
+            think_tool,
+            list_skills,
+            read_skill,
+            save_skill,
+            SEARCH_CALENDAR_EVENT,
+            add,
+            subtract,
+            multiply,
+            divide,
+        ]
         # Guard the whole set: ToolNode resolves tools by name, so a clash
         # would silently shadow one definition.
         return _dedupe_tools(local_tools + mcp_tools + filtered_calendar_tools)

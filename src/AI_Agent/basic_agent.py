@@ -51,7 +51,7 @@ async def custom_tool_node(state: dict):
     all_tools = await MyTools().getAllTools()
     base_tool_node = ToolNode(all_tools, handle_tool_errors=_tool_error_message)
     # 1. Execute the tools (returns dict with new ToolMessages, not yet in state)
-    result = base_tool_node.invoke(state)
+    result = await base_tool_node.ainvoke(state)
     new_messages = result if isinstance(result, list) else result.get("messages", [])
     
     # 2. Check token count before updating state
