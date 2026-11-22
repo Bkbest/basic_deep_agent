@@ -16,9 +16,8 @@ from langgraph.prebuilt.tool_node import (
     ToolNode
 )
 from AI_Tools.tools import MyTools
-from langchain_core.messages import ToolMessage
 from langchain_core.messages.utils import count_tokens_approximately
-from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 import os
@@ -46,37 +45,33 @@ def _tool_error_message(error: Exception) -> str:
         "Retry the call, or continue with a different approach."
     )
     
-    
-async def custom_tool_node(state: dict):
-    all_tools = await MyTools().getAllTools()
-    base_tool_node = ToolNode(all_tools, handle_tool_errors=_tool_error_message)
-    # 1. Execute the tools (returns dict with new ToolMessages, not yet in state)
-    result = await base_tool_node.ainvoke(state)
-    new_messages = result if isinstance(result, list) else result.get("messages", [])
-    
-    # 2. Check token count before updating state
-    for msg in new_messages:
-        if isinstance(msg, ToolMessage):
-            token_count = count_tokens_approximately(str(msg.content))
-            print(f"Tool '{msg.name}' output tokens: {token_count}")
-            
-            # Optional: Truncate or modify if over a threshold
-            if token_count > 250000:
-                msg.content = "Error: Output exceeded 250000 tokens. Please narrow your query."
-                
-    # 3. Return the inspected/modified messages to update state
-    return {"messages": new_messages}
+async def check_tool_tokens(request, handler):
+    result = await handler(request)
+    if isinstance(result, ToolMessage):
+        token_count = count_tokens_approximately(str(result.content))
+        if token_count > 250000:
+            result.content = f"Error: Output exceeded  ({token_count} tokens) Please narrow your query."
+    return result
+
+def check_tool_tokens_sync(request, handler):
+    result = handler(request)
+    if isinstance(result, ToolMessage):
+        token_count = count_tokens_approximately(str(result.content))
+        if token_count > 250000:
+            result.content = f"Error: Output exceeded  ({token_count} tokens) Please narrow your query."
+    return result
 
 
 def create_research_brief_workflow():
     # Create the workflow graph
     workflow = StateGraph(state_schema=State)
+    all_tools = MyTools().getToolsSync()
 
     # Add nodes
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        custom_tool_node,
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=check_tool_tokens_sync),
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
@@ -106,7 +101,7 @@ async def invoke_workflow_stream(thread_id, message):
     workflow.add_node("llm_with_tools", llm_with_tools,retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node(
         "tool_node",
-        custom_tool_node,
+        ToolNode(all_tools, handle_tool_errors=_tool_error_message, wrap_tool_call=check_tool_tokens),
         retry_policy=RetryPolicy(max_attempts=3),
     )
     workflow.add_node("llm_is_task_complete", llm_is_task_complete)
