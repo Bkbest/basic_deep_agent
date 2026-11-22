@@ -214,13 +214,47 @@ API_DOCUMENTATION = {
             },
             "response": {
                 "type": "JSON",
-                "description": "List of messages in the thread",
+                "description": "List of messages in the thread. Only human, AI, and UI-visible tool "
+                               "messages (write_todos, screenshot) are returned; other tool traffic "
+                               "stays internal to the agent loop.",
                 "schema": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "content": {"type": "string"},
+                            "content": {
+                                "oneOf": [
+                                    {"type": "string"},
+                                    {
+                                        "type": "array",
+                                        "description": "Multimodal content blocks. `screenshot` tool "
+                                                       "messages use this shape: a text block holding "
+                                                       "the tool's JSON payload, plus an image_url block "
+                                                       "carrying the base64 PNG/JPEG data URL.",
+                                        "items": {
+                                            "oneOf": [
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "type": {"type": "string", "enum": ["text"]},
+                                                        "text": {"type": "string"}
+                                                    }
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "type": {"type": "string", "enum": ["image_url"]},
+                                                        "image_url": {
+                                                            "type": "string",
+                                                            "description": "Data URL, e.g. data:image/png;base64,<data>"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
                             "type": {"type": "string", "enum": ["human", "ai", "tool"]},
                             "id": {"type": "string"},
                             "usage_metadata": {
@@ -258,6 +292,25 @@ API_DOCUMENTATION = {
                             "input_tokens": 10,
                             "output_tokens": 15
                         }
+                    },
+                    {
+                        "content": "Updated todo list to [{'content': 'Create a detailed list of pending tasks', 'status': 'in_progress'}, {'content': 'Recheck that the answer reached the user', 'status': 'pending'}]",
+                        "type": "tool",
+                        "id": "msg3"
+                    },
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "{\"success\": true, \"screenshot\": \"<image data omitted; attached as an image block>\", \"artifact_id\": \"2c0a71edf1c04d3e8ea5552dff7ed2b0\", \"url\": \"/artifacts/2c0a71edf1c04d3e8ea5552dff7ed2b0\", \"mime\": \"image/png\", \"size\": 60724}"
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...<truncated>"
+                            }
+                        ],
+                        "type": "tool",
+                        "id": "msg4"
                     }
                 ]
             }
@@ -612,9 +665,16 @@ API_DOCUMENTATION = {
                         "thread_id": {"type": "string"},
                         "data": {
                             "type": "object",
-                            "description": "Workflow chunk data with messages"
+                            "description": "Workflow chunk data keyed by node name. Each node may hold "
+                                           "`ai_messages`, `human_messages`, and `tool_messages` "
+                                           "arrays."
                         }
                     }
+                },
+                "node_message_keys": {
+                    "ai_messages": "AI replies with non-empty content, including usage_metadata",
+                    "human_messages": "Messages sent by the user",
+                    "tool_messages": "Results from UI-visible tools only: write_todos and screenshot"
                 }
             },
             "example": {
@@ -642,8 +702,100 @@ API_DOCUMENTATION = {
                                 ]
                             }
                         }
+                    },
+                    {
+                        "thread_id": "thread_abc123_1640995200000",
+                        "data": {
+                            "tool_node": {
+                                "tool_messages": [
+                                    {
+                                        "content": "Updated todo list to [{'content': 'Check the weather forecast', 'status': 'in_progress'}, {'content': 'Recheck that the answer reached the user', 'status': 'pending'}]",
+                                        "type": "tool",
+                                        "id": "msg_124"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "thread_id": "thread_abc123_1640995200000",
+                        "data": {
+                            "tool_node": {
+                                "tool_messages": [
+                                    {
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "{\"success\": true, \"screenshot\": \"<image data omitted; attached as an image block>\", \"artifact_id\": \"2c0a71edf1c04d3e8ea5552dff7ed2b0\", \"url\": \"/artifacts/2c0a71edf1c04d3e8ea5552dff7ed2b0\", \"mime\": \"image/png\", \"size\": 60724}"
+                                            },
+                                            {
+                                                "type": "image_url",
+                                                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...<truncated>"
+                                            }
+                                        ],
+                                        "type": "tool",
+                                        "id": "msg_125"
+                                    }
+                                ]
+                            }
+                        }
                     }
                 ]
+            }
+        }
+    },
+    "tool_responses": {
+        "description": "Sample tool results as they appear in `tool_messages`. Only `write_todos` "
+                       "and `screenshot` results are delivered to clients; every other tool message "
+                       "stays inside the agent loop.",
+        "visible_tools": ["write_todos", "screenshot"],
+        "message_shape": {
+            "content": "string for write_todos, list of content blocks for screenshot",
+            "type": "\"tool\"",
+            "id": "message id, e.g. msg_125"
+        },
+        "examples": {
+            "write_todos": {
+                "description": "Plain-text confirmation that the agent's TODO list was replaced. "
+                               "`content` is a string.",
+                "response": {
+                    "content": "Updated todo list to [{'content': 'Create a detailed list of pending tasks', 'status': 'completed'}, {'content': 'Check the weather forecast', 'status': 'in_progress'}, {'content': 'Recheck that the answer reached the user', 'status': 'pending'}]",
+                    "type": "tool",
+                    "id": "msg_124"
+                }
+            },
+            "screenshot": {
+                "description": "Page screenshot returned by the MCP `screenshot` tool. The raw base64 "
+                               "is moved out of the text and into an `image_url` block, so `content` "
+                               "is a list. The text block still carries the tool's original JSON "
+                               "(success flag, artifact id, URL, MIME type, byte size) with the "
+                               "`screenshot` value replaced by a placeholder. Render the "
+                               "`image_url` block directly in an <img> tag.",
+                "raw_tool_output": {
+                    "success": True,
+                    "screenshot": "<base64 image data>",
+                    "artifact_id": "2c0a71edf1c04d3e8ea5552dff7ed2b0",
+                    "url": "/artifacts/2c0a71edf1c04d3e8ea5552dff7ed2b0",
+                    "mime": "image/png",
+                    "size": 60724
+                },
+                "response": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "{\"success\": true, \"screenshot\": \"<image data omitted; attached as an image block>\", \"artifact_id\": \"2c0a71edf1c04d3e8ea5552dff7ed2b0\", \"url\": \"/artifacts/2c0a71edf1c04d3e8ea5552dff7ed2b0\", \"mime\": \"image/png\", \"size\": 60724}"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...<truncated>"
+                        }
+                    ],
+                    "type": "tool",
+                    "id": "msg_125"
+                },
+                "rendering_tip": "Iterate `content`; render blocks with type \"text\" as text and "
+                                 "blocks with type \"image_url\" as <img src={block.image_url}>. "
+                                 "Do not assume `content` is a string for tool messages."
             }
         }
     },
