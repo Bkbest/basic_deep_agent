@@ -141,41 +141,24 @@ def _attach_screenshot(message: ToolMessage) -> None:
 
 
 def _is_empty_content(content) -> bool:
-    """Return True when a tool result holds no usable content.
+    """Return True when a tool result has nothing the model can read.
 
-    Handles every shape ``ToolMessage.content`` can take: ``None``, a string of
-    whitespace, an empty list, or a list of content blocks whose text parts are
-    all blank. Image blocks count as content because they are valid payloads.
-
-    Args:
-        content: ``ToolMessage.content`` in any of its supported forms.
-
-    Returns:
-        bool: True when there is nothing for the model to read.
+    Handles ``None``, a blank string, an empty dict/list, and a list of blocks
+    that are all blank. Image blocks count as real content.
     """
     if content is None:
         return True
     if isinstance(content, str):
         return not content.strip()
-    if not isinstance(content, (list, tuple)):
-        return False
-    if not content:
-        return True
-
-    for block in content:
-        if isinstance(block, str):
-            if block.strip():
-                return False
-            continue
-        if isinstance(block, dict):
-            if block.get("type") in ("image_url", "image"):
-                return False
-            text = block.get("text")
-            if isinstance(text, str) and text.strip():
-                return False
-            if text is None and block.get("type") not in (None, "text"):
-                return False
-    return True
+    if isinstance(content, dict):
+        if content.get("type") in ("image_url", "image"):
+            return False
+        if "text" in content:
+            return _is_empty_content(content["text"])
+        return not content
+    if isinstance(content, (list, tuple)):
+        return not content or all(_is_empty_content(item) for item in content)
+    return False
 
 
 def _guard_tool_output(result):
@@ -189,6 +172,9 @@ def _guard_tool_output(result):
         carry their own state updates.
     """
     if isinstance(result, ToolMessage):
+        if result.name == SCREENSHOT_TOOL:
+            _attach_screenshot(result)
+
         if _is_empty_content(result.content):
             result.content = EMPTY_TOOL_OUTPUT_TEMPLATE.format(
                 name=result.name or "unknown"
@@ -196,9 +182,7 @@ def _guard_tool_output(result):
             # Mark it as an error so providers that support tool-message status
             # surface the retry hint to the model instead of an empty success.
             result.status = "error"
-            return result       
-        if result.name == SCREENSHOT_TOOL:
-            _attach_screenshot(result)
+            return result
 
         token_count = count_tokens_approximately([result])
         if token_count > MAX_TOOL_OUTPUT_TOKENS:
