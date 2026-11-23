@@ -53,6 +53,15 @@ MAX_TOOL_OUTPUT_TOKENS = 250000
 # Name of the MCP tool whose JSON result carries a base64 screenshot.
 SCREENSHOT_TOOL = "screenshot"
 
+# Replaces a tool result that carries no usable output. An empty result is a
+# dead end for the model: it cannot tell whether the call failed, returned
+# nothing, or was truncated, so it is nudged to verify and retry instead.
+EMPTY_TOOL_OUTPUT_TEMPLATE = (
+    "Error: the '{name}' tool returned no output. This usually means the call "
+    "failed or produced nothing. Check the arguments and try again, or use a "
+    "different approach."
+)
+
 
 def _screenshot_payload(block):
     """Parse the screenshot payload held in a text content block.
@@ -131,8 +140,46 @@ def _attach_screenshot(message: ToolMessage) -> None:
         message.content = parts
 
 
+def _is_empty_content(content) -> bool:
+    """Return True when a tool result holds no usable content.
+
+    Handles every shape ``ToolMessage.content`` can take: ``None``, a string of
+    whitespace, an empty list, or a list of content blocks whose text parts are
+    all blank. Image blocks count as content because they are valid payloads.
+
+    Args:
+        content: ``ToolMessage.content`` in any of its supported forms.
+
+    Returns:
+        bool: True when there is nothing for the model to read.
+    """
+    if content is None:
+        return True
+    if isinstance(content, str):
+        return not content.strip()
+    if not isinstance(content, (list, tuple)):
+        return False
+    if not content:
+        return True
+
+    for block in content:
+        if isinstance(block, str):
+            if block.strip():
+                return False
+            continue
+        if isinstance(block, dict):
+            if block.get("type") in ("image_url", "image"):
+                return False
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                return False
+            if text is None and block.get("type") not in (None, "text"):
+                return False
+    return True
+
+
 def _guard_tool_output(result):
-    """Attach screenshot images, then cap runaway text output.
+    """Attach screenshot images, replace empty output, cap runaway text.
 
     Args:
         result: A tool result: `ToolMessage`, a list of them, or a `Command`.
@@ -142,6 +189,14 @@ def _guard_tool_output(result):
         carry their own state updates.
     """
     if isinstance(result, ToolMessage):
+        if _is_empty_content(result.content):
+            result.content = EMPTY_TOOL_OUTPUT_TEMPLATE.format(
+                name=result.name or "unknown"
+            )
+            # Mark it as an error so providers that support tool-message status
+            # surface the retry hint to the model instead of an empty success.
+            result.status = "error"
+            return result       
         if result.name == SCREENSHOT_TOOL:
             _attach_screenshot(result)
 
