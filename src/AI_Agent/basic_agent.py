@@ -177,7 +177,7 @@ def _guard_tool_output(result):
             # surface the retry hint to the model instead of an empty success.
             result.status = "error"
             return result
-        if result.name == SCREENSHOT_TOOL:
+        elif result.name == SCREENSHOT_TOOL:
             _attach_screenshot(result)
             
         token_count = count_tokens_approximately([result])
