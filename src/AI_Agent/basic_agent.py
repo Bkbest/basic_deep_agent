@@ -146,16 +146,13 @@ def _is_empty_content(content) -> bool:
     Handles ``None``, a blank string, an empty dict/list, and a list of blocks
     that are all blank. Image blocks count as real content.
     """
+    print(content)
     if content is None:
         return True
     if isinstance(content, str):
         return not content.strip()
-    if isinstance(content, dict):
-        if content.get("type") in ("image_url", "image"):
-            return False
-        if "text" in content:
-            return _is_empty_content(content["text"])
-        return not content
+    if "text" in content:
+        return _is_empty_content(content["text"])
     if isinstance(content, (list, tuple)):
         return not content or all(_is_empty_content(item) for item in content)
     return False
@@ -172,9 +169,6 @@ def _guard_tool_output(result):
         carry their own state updates.
     """
     if isinstance(result, ToolMessage):
-        if result.name == SCREENSHOT_TOOL:
-            _attach_screenshot(result)
-
         if _is_empty_content(result.content):
             result.content = EMPTY_TOOL_OUTPUT_TEMPLATE.format(
                 name=result.name or "unknown"
@@ -183,7 +177,9 @@ def _guard_tool_output(result):
             # surface the retry hint to the model instead of an empty success.
             result.status = "error"
             return result
-
+        if result.name == SCREENSHOT_TOOL:
+            _attach_screenshot(result)
+            
         token_count = count_tokens_approximately([result])
         if token_count > MAX_TOOL_OUTPUT_TOKENS:
             result.content = (
